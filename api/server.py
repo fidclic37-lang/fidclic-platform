@@ -8042,6 +8042,9 @@ def _card_customer(barcode_id: str, request: Optional[Request], with_actor: bool
 def get_wallet_card(barcode_id: str, request: Request = None):
     cust = _card_customer(barcode_id, request)
     payload = _serialize_card_payload(cust)
+    # « Ma carte en ligne » (2026-11-25): first name, socials, the poster's photo
+    from features import card_page as _CPG
+    _CPG.enrich(payload, cust)
     _log_card_message_view(cust, payload)
     # The only observable "open" a wallet push has: the customer came and
     # looked at their card (also sets customers.last_card_open_at).

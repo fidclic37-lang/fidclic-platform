@@ -2,132 +2,87 @@ import { vh } from '../lib/fit';
 import React, { useEffect, useRef, useState } from 'react';
 import { useParams, Link, useNavigate, useLocation } from 'react-router-dom';
 import { readMine, addMine, forgetMine, keyOf } from '../lib/myCards';
-import { QRCodeSVG } from 'qrcode.react';
-import { cardUrl } from '../components/PremiumLoyaltyCard';
-import Code128Barcode from '../components/Code128Barcode';
-import { Bell, RefreshCw, Trash2, Gift, Sparkles, ChevronRight, Store, MapPin, Phone, Globe, CheckCircle2, XCircle, Clock, ChevronDown, X, Download, ShieldCheck, Star, Settings, Share2, Smartphone, Printer } from 'lucide-react';
+import { Bell, RefreshCw, Trash2, CheckCircle2, XCircle, Clock, X, Download, ShieldCheck, Star, Settings, Share2, Smartphone, Printer, MapPin, Phone, Globe, Store, ChevronLeft, Flame, Gift } from 'lucide-react';
 import api, { publicAPI } from '../lib/api';
 import { ensureSubscribed, unsubscribe as unsubscribePush, isSupported as isPushSupported } from '../lib/webpush';
 import InstallPwaPrompt from '../components/InstallPwaPrompt';
 import GeoConsentCard from '../components/GeoConsentCard';
-import PremiumLoyaltyCard from '../components/PremiumLoyaltyCard';
 import WalletPassPreview from '../components/WalletPassPreview';
-import { programmeOf, rewardProgress, earningRule, balanceText, balanceLabel } from '../lib/programme';
+import { programmeOf, earningRule, balanceText } from '../lib/programme';
 import WalletButtons from '../components/WalletButtons';
-import TierBadge from '../components/TierBadge';
 import { cycleVisits, rewardsPending } from '../lib/cardCycle';
 import { protectNames } from '../lib/translator';
 import { liveOffers } from '../lib/cardOffers';
+import { themeFromCard, themeVars } from '../lib/cardTheme';
+import { activityTime, activityRow, pointsBox, tabFromSearch, searchForTab, socialLinks } from '../lib/cardPage';
+import './MyWalletCardPage.css';
 
-// ---------------------------------------------------------------------------
-// Element / stamp rendering — mirrors the owner-side designer
-// ---------------------------------------------------------------------------
-const ELEMENT_FALLBACK_TEXT = {
-  business_name: '{business_name}',
-  customer_name: '{name}',
-  tier: 'Statut : {tier}',
-  points: '{points} pts',
-  birthday: '🎂 {birthday}',
-  offer_banner: '{offer_title}',
-  reward_hint: 'Encore {points_remaining} points pour une récompense',
-  logo: '',
-};
+/*
+ * « Ma carte en ligne » — the customer's card page (/card/:barcodeId, the
+ * Wallet pass's « Ma carte en ligne » link). Photo/tabs redesign 2026-11-25
+ * (mockup « Carte en ligne claire »): the card's own photo with « Bonjour,
+ * <prénom> ! », the points box in the programme's words, three tiles, the last
+ * activities, « Suivez-nous », and four bottom tabs that carry everything the
+ * previous page had (MyWalletCardPagePrev.jsx, unrouted, for a rollback):
+ *
+ *   Accueil      the mockup + the missed-offers banner + the automation message
+ *   Ma carte     the Wallet pass, Apple / Google / Samsung, share · home screen ·
+ *                print, the PWA install prompt, the geolocation consent
+ *   Récompenses  « Le programme », the reward waiting at the till, the défis
+ *   Mon compte   paramètres, avis, à propos, RGPD, delete the card
+ *
+ * Tabs live in the address bar (?onglet=carte|recompenses|compte|historique;
+ * the Wallet « Programme » tile's ?onglet=programme is Récompenses) so the back
+ * button walks them. Colours come from the card itself (lib/cardTheme
+ * themeFromCard), words from lib/cardPage.
+ */
 
-const substitute = (text, ctx) => {
-  if (!text) return '';
-  return String(text)
-    .replace(/\{name\}/g, ctx.name || '')
-    .replace(/\{first_name\}/g, (ctx.name || '').split(' ')[0] || '')
-    .replace(/\{tier\}/g, (ctx.tier || '').charAt(0).toUpperCase() + (ctx.tier || '').slice(1))
-    .replace(/\{points\}/g, ctx.points ?? 0)
-    .replace(/\{points_remaining\}/g, ctx.points_remaining ?? '')
-    .replace(/\{birthday\}/g, ctx.birthday || '')
-    .replace(/\{business_name\}/g, ctx.business_name || '')
-    .replace(/\{offer_title\}/g, ctx.offer_title || '');
-};
+const FONT_ID = 'wcp-font-jakarta';
+const FONT_URL = 'https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap';
 
-const RenderElement = ({ id, cfg, ctx, tpl }) => {
-  if (!cfg || cfg.visible === false) return null;
-  const text = substitute(cfg.text ?? ELEMENT_FALLBACK_TEXT[id] ?? '', ctx);
-  if (id === 'logo' && tpl.logo_url) {
-    return (
-      <img
-        src={tpl.logo_url}
-        alt=""
-        className="absolute rounded-lg object-cover border-2 border-white/20 pointer-events-none"
-        style={{
-          left: `${cfg.x_pct}%`, top: `${cfg.y_pct}%`,
-          transform: 'translate(-50%, -50%)',
-          width: `${Math.max(cfg.font_size * 3, 44)}px`,
-          height: `${Math.max(cfg.font_size * 3, 44)}px`,
-        }}
-      />
-    );
-  }
-  if (!text) return null;
-  return (
-    <div
-      className="absolute pointer-events-none"
-      style={{
-        left: `${cfg.x_pct}%`, top: `${cfg.y_pct}%`,
-        transform: 'translate(-50%, -50%)',
-        fontFamily: cfg.font_family || 'Inter',
-        fontSize: `${cfg.font_size || 14}px`,
-        fontWeight: cfg.font_weight || 'normal',
-        fontStyle: cfg.font_style || 'normal',
-        textDecoration: cfg.text_decoration || 'none',
-        color: cfg.color || '#FFFFFF',
-        textAlign: cfg.align || 'left',
-        whiteSpace: 'nowrap', maxWidth: '92%',
-      }}
-    >{text}</div>
-  );
+// ---------------------------------------------------------------- icons (mockup)
+const Svg = ({ size = 21, children, fill = 'none', sw = 1.8, ...rest }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill={fill} stroke={fill === 'none' ? 'currentColor' : undefined}
+       strokeWidth={sw} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" focusable="false" {...rest}>{children}</svg>
+);
+const I = {
+  chev: <Svg size={14} sw={2.4}><path d="m9 6 6 6-6 6" /></Svg>,
+  bell: <Svg size={19}><path d="M6 8a6 6 0 1 1 12 0c0 7 3 8 3 8H3s3-1 3-8" /><path d="M10 20a2 2 0 0 0 4 0" /></Svg>,
+  user: (s = 19) => <Svg size={s}><circle cx="12" cy="8" r="4" /><path d="M4 21c1.5-4 4.5-6 8-6s6.5 2 8 6" /></Svg>,
+  coins: <Svg size={23}><ellipse cx="10" cy="6.5" rx="6" ry="2.5" /><path d="M4 6.5v4c0 1.4 2.7 2.5 6 2.5s6-1.1 6-2.5v-4" /><path d="M8 15.3v2.2c0 1.4 2.7 2.5 6 2.5s6-1.1 6-2.5v-4c0-1.2-2-2.2-4.6-2.4" /></Svg>,
+  stamp: (s = 23) => <Svg size={s}><circle cx="12" cy="12" r="8.5" /><path d="m8.5 12.2 2.4 2.4 4.6-5" /></Svg>,
+  ticket: <Svg><path d="M3 8a2 2 0 0 0 2-2h14a2 2 0 0 0 2 2v2a2 2 0 0 0 0 4v2a2 2 0 0 0-2 2H5a2 2 0 0 0-2-2v-2a2 2 0 0 0 0-4z" /><path d="m9.5 14.5 5-5" /><circle cx="9.7" cy="9.7" r=".7" fill="currentColor" /><circle cx="14.3" cy="14.3" r=".7" fill="currentColor" /></Svg>,
+  people: <Svg><circle cx="9" cy="8" r="3.2" /><path d="M3 19c.8-3 3.2-5 6-5s5.2 2 6 5" /><circle cx="17" cy="9" r="2.4" /><path d="M16.5 14c2.3 0 4 1.6 4.5 4" /></Svg>,
+  clock: <Svg><circle cx="12" cy="13" r="8" /><path d="M12 9v4l2.5 2M9 2h6" /></Svg>,
+  pulse: <Svg size={19} sw={2.2}><path d="M2 12h4l3-7 5 14 3-7h5" /></Svg>,
+  db: <Svg size={19}><ellipse cx="12" cy="6" rx="7" ry="3" /><path d="M5 6v6c0 1.7 3.1 3 7 3s7-1.3 7-3V6M5 12v6c0 1.7 3.1 3 7 3s7-1.3 7-3v-6" /></Svg>,
+  gift: (s) => <Svg size={s}><rect x="4" y="10" width="16" height="10" rx="1.5" /><rect x="3" y="7" width="18" height="4" rx="1.5" /><path d="M12 7v13M12 7c-1.5-3.5-6-4-5.5-1.3C6.8 7 12 7 12 7zM12 7c1.5-3.5 6-4 5.5-1.3C17.2 7 12 7 12 7z" /></Svg>,
+  home: <Svg size={23} fill="currentColor"><path d="M4 10.5 12 4l8 6.5V20h-5.5v-5.5h-5V20H4z" /></Svg>,
+  card: <Svg size={23}><rect x="3" y="5" width="18" height="14" rx="2.5" /><path d="M3 10h18" /></Svg>,
 };
+const NET = {
+  instagram: <Svg size={18} sw={2}><rect x="4" y="4" width="16" height="16" rx="5" /><circle cx="12" cy="12" r="3.8" /><circle cx="17" cy="7" r="1" fill="currentColor" stroke="none" /></Svg>,
+  tiktok: <Svg size={17} fill="currentColor"><path d="M14 2h3c.3 2.4 1.8 4 4 4.3v3.1c-1.5 0-2.9-.5-4-1.2V15a6.5 6.5 0 1 1-6.5-6.5c.3 0 .6 0 .9.1v3.2a3.4 3.4 0 1 0 2.6 3.2z" /></Svg>,
+  snapchat: <svg width="19" height="19" viewBox="0 0 24 24" fill="#fff" stroke="#000" strokeWidth="1.5" strokeLinejoin="round" aria-hidden="true"><path d="M12 3c3.2 0 5.2 2.4 5.2 5.4v2.3l1.8-.5c.6 0 .8.7.3 1l-2 1c.6 1.8 2 3.2 3.7 3.7-.3.8-1.6 1-2.6 1.1-.2.6-.3 1.2-.6 1.3-.6.2-1.5-.2-2.5.1-1 .3-1.7 1.6-3.3 1.6s-2.3-1.3-3.3-1.6c-1-.3-1.9.1-2.5-.1-.3-.1-.4-.7-.6-1.3-1-.1-2.3-.3-2.6-1.1 1.7-.5 3.1-1.9 3.7-3.7l-2-1c-.5-.3-.3-1 .3-1l1.8.5V8.4C6.8 5.4 8.8 3 12 3z" /></svg>,
+  facebook: <Svg size={18} fill="currentColor"><path d="M13.5 21v-7.5H16l.4-3h-2.9V8.6c0-.9.3-1.5 1.5-1.5h1.5V4.4A20 20 0 0 0 14.3 4C12 4 10.5 5.4 10.5 7.9v2.6H8v3h2.5V21z" /></Svg>,
+  youtube: <Svg size={18} fill="currentColor"><path d="M21.6 7.2a2.5 2.5 0 0 0-1.8-1.8C18.2 5 12 5 12 5s-6.2 0-7.8.4A2.5 2.5 0 0 0 2.4 7.2 26 26 0 0 0 2 12a26 26 0 0 0 .4 4.8 2.5 2.5 0 0 0 1.8 1.8C5.8 19 12 19 12 19s6.2 0 7.8-.4a2.5 2.5 0 0 0 1.8-1.8A26 26 0 0 0 22 12a26 26 0 0 0-.4-4.8zM10 15V9l5.2 3z" /></Svg>,
+  x: <Svg size={16} fill="currentColor"><path d="M17.5 3h3.1l-6.8 7.8L21.8 21h-6.3l-4.9-6.4L5 21H1.9l7.3-8.3L1.6 3h6.4l4.4 5.9zm-1.1 16.2h1.7L7.1 4.7H5.3z" /></Svg>,
+  linkedin: <Svg size={17} fill="currentColor"><path d="M4.5 3.5a2 2 0 1 1 0 4 2 2 0 0 1 0-4zM3 9h3v12H3zm6 0h2.9v1.7h.1c.4-.8 1.4-1.9 3-1.9 3.2 0 3.8 2.1 3.8 4.8V21h-3v-6.5c0-1.6 0-3.5-2.1-3.5s-2.5 1.7-2.5 3.4V21H9z" /></Svg>,
+  pinterest: <Svg size={18} fill="currentColor"><path d="M12 2a10 10 0 0 0-3.6 19.3c-.1-.8-.2-2 0-2.9l1.3-5.4s-.3-.7-.3-1.6c0-1.5.9-2.7 2-2.7.9 0 1.4.7 1.4 1.5 0 .9-.6 2.3-.9 3.6-.3 1.1.5 2 1.6 2 1.9 0 3.4-2 3.4-5 0-2.6-1.9-4.4-4.6-4.4-3.1 0-5 2.3-5 4.8 0 .9.4 1.9.8 2.5.1.1.1.2.1.3l-.3 1.2c0 .2-.2.3-.4.2-1.4-.7-2.3-2.7-2.3-4.4 0-3.6 2.6-6.9 7.5-6.9 3.9 0 7 2.8 7 6.6 0 3.9-2.5 7.1-5.9 7.1-1.2 0-2.3-.6-2.6-1.3l-.7 2.7c-.3 1-1 2.2-1.4 3A10 10 0 1 0 12 2z" /></Svg>,
+  whatsapp: <Svg size={18} fill="currentColor"><path d="M12 2a10 10 0 0 0-8.6 15.1L2 22l5-1.3A10 10 0 1 0 12 2zm5.3 14.1c-.2.6-1.3 1.2-1.8 1.3-.5 0-1 .2-3.3-.7-2.8-1.1-4.5-3.9-4.7-4.1-.1-.2-1.1-1.5-1.1-2.8s.7-2 1-2.3c.2-.3.5-.3.7-.3h.5c.2 0 .4 0 .6.5l.9 2.1c.1.2.1.4 0 .5l-.3.5-.4.4c-.1.1-.3.3-.1.6.2.3.8 1.3 1.7 2.1 1.2 1 2.1 1.4 2.4 1.5.3.1.5.1.7-.1l.9-1.1c.2-.3.4-.2.7-.1l2 1c.3.1.5.2.5.3.1.2.1.6-.1 1.2z" /></Svg>,
+  site: <Svg size={18}><circle cx="12" cy="12" r="9" /><path d="M3 12h18M12 3c2.5 2.6 3.8 5.6 3.8 9s-1.3 6.4-3.8 9c-2.5-2.6-3.8-5.6-3.8-9S9.5 5.6 12 3z" /></Svg>,
+};
+const NET_CLASS = { instagram: 'ig', tiktok: 'tt', snapchat: 'sc', facebook: 'fb', youtube: 'yt', x: 'x', linkedin: 'li', pinterest: 'pi', whatsapp: 'wa' };
 
-const StampVisual = ({ style, filled, total, accent }) => {
-  if (style === 'none') return null;
-  if (style === 'bar') {
-    return (
-      <div>
-        <div className="text-[10px] uppercase tracking-widest opacity-70 mb-1">Carte de fidélité</div>
-        <div className="h-3 bg-white/20 rounded-full overflow-hidden">
-          <div className="h-full rounded-full" style={{ width: `${(filled / total) * 100}%`, background: accent }} />
-        </div>
-        <div className="text-xs opacity-80 mt-1">{filled} / {total} visites</div>
-      </div>
-    );
-  }
-  const items = [...Array(total)];
-  const cols = Math.min(total, 10);
-  const renderOne = (i) => {
-    const on = i < filled;
-    if (style === 'hexagon') return (
-      <svg key={i} viewBox="0 0 100 100" className="w-8 h-8 drop-shadow-sm" style={{ fill: on ? accent : 'transparent', stroke: accent, strokeWidth: 4 }}>
-        <polygon points="50,5 95,25 95,75 50,95 5,75 5,25" />
-      </svg>
-    );
-    if (style === 'circles') return <div key={i} className="w-7 h-7 rounded-full border-2" style={{ background: on ? accent : 'transparent', borderColor: accent }} />;
-    if (style === 'classic_dots') return <div key={i} className="w-4 h-4 rounded-full" style={{ background: on ? accent : 'rgba(255,255,255,0.2)' }} />;
-    if (style === 'squares') return <div key={i} className="w-7 h-7 rounded border-2" style={{ background: on ? accent : 'transparent', borderColor: accent }} />;
-    if (style === 'stars') return (
-      <svg key={i} viewBox="0 0 24 24" className="w-7 h-7" style={{ fill: on ? accent : 'transparent', stroke: accent, strokeWidth: 1.5 }}>
-        <polygon points="12,2 15,9 22,9 17,14 19,22 12,18 5,22 7,14 2,9 9,9" />
-      </svg>
-    );
-    return null;
-  };
-  return (
-    <div className="flex flex-col items-center gap-2">
-      <div className="text-[10px] uppercase tracking-widest opacity-70">Carte de fidélité</div>
-      <div className="grid gap-2 justify-items-center" style={{ gridTemplateColumns: `repeat(${cols}, minmax(0, auto))` }}>
-        {items.map((_, i) => renderOne(i))}
-      </div>
-    </div>
-  );
-};
+// Only a real picture address reaches a CSS url(): http(s), same-site or data:image.
+function cssUrl(u) {
+  const s = String(u || '').trim();
+  if (!/^(https?:\/\/|\/(?!\/)|data:image\/)/i.test(s)) return null;
+  return `url("${s.replace(/["\\\n\r]/g, (c) => encodeURIComponent(c))}")`;
+}
 
 // Tiny error boundary scoped to the wallet card render. Without this,
-// any thrown error inside <PremiumLoyaltyCard /> bubbles up and Vercel's
+// any thrown error inside the pass preview bubbles up and Vercel's
 // runtime turns it into a blank page — terrible debugging UX for the
 // owner who tries the URL on a phone.
 class WalletCardErrorBoundary extends React.Component {
@@ -157,6 +112,49 @@ class WalletCardErrorBoundary extends React.Component {
   }
 }
 
+// The shop's logo, or its first letter when there is none (or it does not load).
+function ShopLogo({ url, name, className }) {
+  const [broken, setBroken] = useState(false);
+  if (url && !broken) return <img src={url} alt="" className={className} onError={() => setBroken(true)} />;
+  return <span className={`${className} letter`} aria-hidden="true">{(name || '?').trim().charAt(0).toUpperCase()}</span>;
+}
+
+const ROW_ICON = { coin: ['coin', I.db], stamp: ['coin', I.stamp(19)], gift: ['ok', I.gift(19)], people: ['', I.people] };
+function ActivityRows({ items, card, testId }) {
+  const rows = (items || []).map((it) => ({ it, r: activityRow(it, card) })).filter((x) => x.r);
+  return (
+    <ul className="rows" data-testid={testId}>
+      {rows.map(({ it, r }, i) => {
+        const [cls, icon] = ROW_ICON[r.icon] || ROW_ICON.coin;
+        return (
+          <li key={`${it.at || ''}-${i}`} className="row">
+            <span className={`ico ${cls}`}>{icon}</span>
+            <div style={{ minWidth: 0 }}>
+              <b className="num">{r.title}</b>
+              {r.sub && <span>{r.sub}</span>}
+              {r.sub && r.plus && <span> · </span>}
+              {r.plus && <span className="plus num">{r.plus}</span>}
+            </div>
+            <time className="num notranslate" translate="no" dateTime={typeof it.at === 'string' ? it.at : undefined}>{activityTime(it.at)}</time>
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
+const fmtDay = (s) => {
+  const t = Date.parse(s || '');
+  return Number.isFinite(t) ? new Date(t).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', timeZone: 'Europe/Paris' }) : '';
+};
+
+const TAB_DEFS = [
+  { key: 'accueil', label: 'Accueil', icon: I.home },
+  { key: 'carte', label: 'Ma carte', icon: I.card },
+  { key: 'recompenses', label: 'Récompenses', icon: I.gift(23) },
+  { key: 'compte', label: 'Mon compte', icon: I.user(23) },
+];
+
 const CardView = () => {
   const { barcodeId } = useParams();
   const [data, setData] = useState(null);
@@ -167,18 +165,6 @@ const CardView = () => {
   // RGPD forget-me completed — distinct from `deleted` (card removed from
   // wallet, data kept) because here the DATA itself is gone.
   const [erased, setErased] = useState(false);
-  // Two tabs only now (offers + program). The old "news" tab was a
-  // duplicate of offers — same backend campaigns shown under a different
-  // name. Merged into a single "Offres & messages" feed on the offers
-  // tab so customers (and merchants) don't see the same items twice.
-  // ?onglet=offres|programme — where the iOS 27 tiles under the Wallet pass land.
-  // The menu's open sheet: program | review | about | settings (2026-10-10
-  // redesign). The Wallet « Programme » tile (?onglet=programme) opens « Le
-  // programme » right away.
-  const [sheet, setSheet] = useState(() => {
-    try { return new URLSearchParams(window.location.search).get('onglet') === 'programme' ? 'program' : null; }
-    catch (_e) { return null; }
-  });
   // the pass at the phone's width (WalletPassPreview draws at a fixed px width)
   const [passW, setPassW] = useState(() => Math.min(420, Math.max(280, (typeof window !== 'undefined' ? window.innerWidth : 390) - 32)));
   useEffect(() => {
@@ -187,7 +173,6 @@ const CardView = () => {
     return () => window.removeEventListener('resize', fit);
   }, []);
   const [toast, setToast] = useState(null);
-  const [detailsOpen, setDetailsOpen] = useState(false);
   // Forces the InstallPwaPrompt to ignore the "dismissed recently" memory.
   // We flip this on when the user tries to enable push on iOS without having
   // installed the PWA first — the install flow is the actual fix.
@@ -598,6 +583,61 @@ const CardView = () => {
     api.get(`/campaigns/${item.id}/pixel/${data.customer.id}.png`).catch(() => {});
   }, [mergedFeed, data?.customer?.id]);
 
+  // ── Redesign 2026-11-25: tabs, activity, theme — above every early return ──
+  // The tab is the address bar's (?onglet=…), so the back button walks tabs.
+  const location = useLocation();
+  const navigate = useNavigate();
+  const tab = tabFromSearch(location.search);
+  const goTab = (next) => {
+    const search = searchForTab(window.location.search, next);
+    if (search === window.location.search) return;
+    navigate({ pathname: window.location.pathname, search }, { state: { cardTab: true } });
+    try { window.scrollTo({ top: 0 }); } catch (_e) { /* old browsers */ }
+  };
+
+  // « Mes dernières activités »: the last three, asked once the card is here
+  const [recent, setRecent] = useState(null);
+  useEffect(() => {
+    if (!barcodeId || !data?.customer?.id) return;
+    let alive = true;
+    api.get(`/card/${barcodeId}/activity`, { params: { limit: 3 } })
+      .then((r) => { if (alive) setRecent(Array.isArray(r?.data?.items) ? r.data.items : []); })
+      .catch(() => { if (alive) setRecent([]); });
+    return () => { alive = false; };
+  }, [barcodeId, data?.customer?.id]);
+
+  // Historique: the whole list, page by page (`next` → `before`)
+  const [history, setHistory] = useState({ items: [], next: null, loaded: false, busy: false });
+  const loadHistory = (before) => {
+    setHistory((h) => ({ ...h, busy: true }));
+    api.get(`/card/${barcodeId}/activity`, { params: { limit: 20, ...(before ? { before } : {}) } })
+      .then((r) => {
+        const items = Array.isArray(r?.data?.items) ? r.data.items : [];
+        setHistory((h) => ({ items: before ? [...h.items, ...items] : items, next: r?.data?.next || null, loaded: true, busy: false }));
+      })
+      .catch(() => setHistory((h) => ({ ...h, loaded: true, busy: false })));
+  };
+  useEffect(() => {
+    if (tab !== 'historique' || !data?.customer?.id || history.loaded || history.busy) return;
+    loadHistory(null);
+  }, [tab, data?.customer?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // The shop's colours, calmed (lib/cardTheme), and the mockup's font
+  const theme = React.useMemo(() => themeFromCard(data?.card), [data?.card]);
+  useEffect(() => {
+    if (document.getElementById(FONT_ID)) return;
+    const l = document.createElement('link');
+    l.id = FONT_ID; l.rel = 'stylesheet'; l.href = FONT_URL;
+    document.head.appendChild(l);
+  }, []);
+  // the page colour behind iOS's overscroll too
+  useEffect(() => {
+    if (!data?.card) return undefined;
+    const before = document.body.style.backgroundColor;
+    document.body.style.backgroundColor = theme.page;
+    return () => { document.body.style.backgroundColor = before; };
+  }, [theme.page, data?.card]);
+
   if (loading) {
     return <div key="loading" className="min-h-screen bg-[#FAFAF8] flex items-center justify-center text-[#57504A]">Chargement de votre carte…</div>;
   }
@@ -682,7 +722,6 @@ const CardView = () => {
       </div>
     );
   }
-  const activeOffer = card.active_offer || {};
   const stampsTarget = card.reward_threshold || 10;
 
 
@@ -714,129 +753,226 @@ const CardView = () => {
   // offres » and back — without it the page took the browser's own card for
   // the shop and opened that one instead (QA F34, 2026-10-11)
   const shopView = new URLSearchParams(window.location.search).get('vue') === 'commerce';
-  const menu = [
-    { key: 'offers', icon: Sparkles, label: 'Mes offres', hint: liveOfferCount ? `${liveOfferCount} en cours` : 'Les offres de la boutique', to: `/card/${barcodeId}/offres${shopView ? '?vue=commerce' : ''}` },
-    { key: 'program', icon: Gift, label: 'Le programme',
-      hint: card.reward_description
-        ? (programmeOf(card) === 'stamps' ? `${card.reward_description} après ${stampsTarget} visites`
-          : rewardProgress(card).rule)
-        : 'Récompenses et points' },
-    recentVisit && { key: 'review', icon: Star, label: 'Donner mon avis', hint: 'Sur votre dernière visite — anonyme' },
-    { key: 'about', icon: Store, label: `À propos de ${tenant.name || 'la boutique'}`, hint: 'Adresse, horaires, contact' },
-    { key: 'settings', icon: Settings, label: 'Paramètres', hint: 'Notifications, mes données, supprimer ma carte' },
-  ].filter(Boolean);
+  const q = shopView ? '?vue=commerce' : '';
+  const shop = tenant?.name || '';
+  const firstName = (customer.first_name || String(customer.name || '').trim().split(/\s+/)[0] || '').trim();
+  const box = pointsBox(card, customer);
+  const socials = socialLinks(card.socials);
+  const heroUrl = cssUrl(card.hero_photo_url);
+  const missed = notifStatus && !notifStatus.subscribed && notifStatus.missed_count > 0;
+  const autoMsg = (() => {
+    const am = geoMsg || data?.auto_message;
+    return am && am.title && hiddenMsg !== am.log_id ? am : null;
+  })();
+  const tier = ({ bronze: 'Bronze', silver: 'Argent', gold: 'Or', vip: 'VIP' })[String(customer.tier || 'bronze').toLowerCase()] || customer.tier;
+  const enableFromBanner = async () => {
+    const slug = data?.tenant?.slug;
+    if (!slug || !barcodeId) return;
+    try {
+      const r = await ensureSubscribed(slug, barcodeId);
+      if (r && r.ok) { showToast('Notifications activées — merci !'); setNotifStatus({ subscribed: true, missed_count: 0 }); }
+      else if (r?.status === 'permission_denied') showToast('Activez les notifications dans les paramètres de votre navigateur.');
+      else showToast("Impossible d'activer les notifications.");
+    } catch { showToast("Impossible d'activer les notifications."); }
+  };
+  const hideAutoMsg = (am) => {
+    setHiddenMsg(am.log_id); setGeoMsg(null);
+    try { localStorage.setItem('fidclic:auto_msg_hidden', am.log_id); } catch { /* private mode */ }
+  };
+  const submitReview = async () => {
+    try {
+      setReviewSubmitting(true);
+      setReviewError(null);
+      const { data: sent } = await publicAPI.submitReview({
+        customer_id: customer.id, barcode_id: customer.barcode_id, rating: reviewRating, text: reviewText,
+        visit_id: customer.last_visit_id || undefined, branch_id: customer.branch_id || undefined,
+      });
+      setGoogleReviewUrl(sent?.google_review_url || null);
+      setReviewThanks(true);
+      setReviewText('');
+    } catch (e) {
+      setReviewError(e?.response?.data?.detail || 'Impossible d\'envoyer votre avis.');
+    } finally {
+      setReviewSubmitting(false);
+    }
+  };
+  const testPush = async () => {
+    try {
+      const { data: d = {} } = await api.post(`/card/${customer.barcode_id}/test-push`);
+      if (d.sent > 0) showToast(`Notification envoyée à ${d.sent} appareil${d.sent > 1 ? 's' : ''}.`);
+      else if (d.error === 'no_subscription') showToast('Activez d’abord les notifications ci-dessus.');
+      else if (d.error === 'vapid_not_configured') showToast('Notifications non configurées (contactez le commerçant).');
+      else showToast(`Échec : ${d.error || 'inconnu'}`);
+    } catch (e) { showToast('Erreur réseau lors du test.'); }
+  };
 
-  return (
-    <div className="min-h-screen bg-gradient-to-b from-[#F4F7FC] to-[#EEF3FB] font-['Inter',system-ui,sans-serif]">
-      <div className="mx-auto max-w-[460px] px-4 pb-12 pt-6">
-        {/* Missed offers — the customer is not subscribed and offers went out (push recovery, strategy 1) */}
-        {notifStatus && !notifStatus.subscribed && notifStatus.missed_count > 0 && showMissedBanner && (
-          <div role="alert" className="mb-4 flex items-start gap-3 rounded-2xl border border-[#F5D58A] bg-[#FFF8E6] p-3.5">
-            <span aria-hidden="true" className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-[#FDEBB8] text-[18px]">🔔</span>
-            <div className="min-w-0 flex-1">
-              <p className="text-[14px] font-bold text-[#0B1C3F]">
-                {notifStatus.missed_count === 1 ? 'Vous avez raté 1 offre' : `Vous avez raté ${notifStatus.missed_count} offres`}
-              </p>
-              <p className="mt-0.5 text-[12.5px] leading-snug text-[#475569]">Activez les notifications pour ne plus rien manquer de {tenant?.name || 'cette boutique'}.</p>
-              <button type="button"
-                      onClick={async () => {
-                        const slug = data?.tenant?.slug;
-                        if (!slug || !barcodeId) return;
-                        try {
-                          const r = await ensureSubscribed(slug, barcodeId);
-                          if (r && r.ok) { showToast('Notifications activées — merci !'); setNotifStatus({ subscribed: true, missed_count: 0 }); }
-                          else if (r?.status === 'permission_denied') showToast('Activez les notifications dans les paramètres de votre navigateur.');
-                          else showToast("Impossible d'activer les notifications.");
-                        } catch { showToast("Impossible d'activer les notifications."); }
-                      }}
-                      className="mt-2 rounded-lg bg-[#F59E0B] px-3 py-1.5 text-[12.5px] font-semibold text-white">
-                Activer les notifications
-              </button>
+  // Header of the tabs other than Accueil: the shop, then the tab's title
+  const tabHead = (title, back) => (
+    <header className="head">
+      {back
+        ? <button type="button" className="back" aria-label="Retour" onClick={back}><ChevronLeft size={22} aria-hidden="true" /></button>
+        : <ShopLogo url={card.logo_url} name={shop} className="logo" />}
+      <div style={{ minWidth: 0 }}>
+        <p className="k notranslate" translate="no" style={{ margin: 0 }}>{shop}</p>
+        <h1>{title}</h1>
+      </div>
+    </header>
+  );
+
+  // ─────────────────────────────────────────────────── Accueil
+  const home = (
+    <>
+      <div className={`hero${heroUrl ? '' : ' nophoto'}`} data-testid="card-hero" style={heroUrl ? { '--hero': heroUrl } : undefined}>
+        {heroUrl && <div className="hero-img" data-testid="hero-photo" aria-hidden="true" style={{ backgroundImage: heroUrl }} />}
+        {heroUrl && <div className="hero-shade" aria-hidden="true" />}
+        <header className="top">
+          <div className="brand">
+            <ShopLogo url={card.logo_url} name={shop} className="logo" />
+            <div style={{ minWidth: 0 }}>
+              <div className="wm notranslate" translate="no">{shop}</div>
+              {String(card.tagline || '').trim() && <div className="tag" data-testid="hero-tagline">{String(card.tagline).trim()}</div>}
             </div>
-            <button type="button" onClick={() => setShowMissedBanner(false)} aria-label="Fermer" className="p-1 text-[#94A3B8]"><X size={16} /></button>
+          </div>
+          <div className="icons">
+            <Link to={`/card/${barcodeId}/offres${q}`} className="round" aria-label="Notifications">
+              {I.bell}{(liveOfferCount > 0 || missed) && <span className="dot" aria-hidden="true" />}
+            </Link>
+            <button type="button" className="round" aria-label="Mon compte" onClick={() => goTab('compte')}>{I.user()}</button>
+          </div>
+        </header>
+        <div className="hero-space">
+          {!heroUrl && <span data-testid="hero-logo"><ShopLogo url={card.logo_url} name={shop} className="biglogo" /></span>}
+        </div>
+        <div className="hello"><h1>{firstName ? <>Bonjour, <span className="notranslate" translate="no">{firstName}</span> !</> : 'Bonjour !'}</h1></div>
+      </div>
+      <div className="hero-tail" aria-hidden="true" />
+      <div className="stack">
+        <section className="sheet points" data-testid="points-box" aria-label={box.label}>
+          <div className="ph">
+            <span className="ico">{programmeOf(card) === 'stamps' ? I.stamp() : I.coins}</span>
+            <div style={{ minWidth: 0 }}>
+              <div className="label">{box.label}</div>
+              <div className="big num">{box.big}{box.unit && <> <small>{box.unit}</small></>}</div>
+            </div>
+            <button type="button" className="pill" onClick={() => goTab('carte')}>Ma carte {I.chev}</button>
+          </div>
+          <div className="pb">
+            <div>
+              {box.message && (
+                <p>{box.strong && box.message.includes(box.strong)
+                  ? <>{box.message.split(box.strong)[0]}<strong className="num">{box.strong}</strong>{box.message.split(box.strong).slice(1).join(box.strong)}</>
+                  : box.message}</p>
+              )}
+              {box.progress != null && (
+                <div className="bar" role="progressbar" aria-label="Progression vers la récompense"
+                     aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(box.progress * 100)}>
+                  <i style={{ width: `${Math.max(box.progress > 0 ? 4 : 0, box.progress * 100)}%` }} />
+                </div>
+              )}
+              {box.scale && <div className="scale num">{box.scale}</div>}
+            </div>
+            <svg viewBox="0 0 74 70" width="74" height="70" aria-hidden="true">
+              <ellipse cx="37" cy="64" rx="26" ry="4" fill="var(--soft)" />
+              <rect x="12" y="30" width="50" height="32" rx="5" fill="var(--soft)" stroke="var(--brand)" strokeWidth="1.6" />
+              <rect x="8" y="21" width="58" height="12" rx="4" fill="var(--sheet)" stroke="var(--brand)" strokeWidth="1.6" />
+              <rect x="33" y="21" width="8" height="41" fill="var(--ribbon,var(--brand))" />
+              <path d="M37 21c-5-10-18-11-16-3 1 4 9 3 16 3zM37 21c5-10 18-11 16-3-1 4-9 3-16 3z" fill="var(--sheet)" stroke="var(--brand)" strokeWidth="1.6" strokeLinejoin="round" />
+            </svg>
+          </div>
+        </section>
+
+        {/* Missed offers — not subscribed and offers went out (push recovery, strategy 1) */}
+        {missed && showMissedBanner && (
+          <div role="alert" className="sheet note warn">
+            <span aria-hidden="true" className="ico" style={{ width: 40, height: 40, background: 'var(--sheet)', color: 'var(--accent-ink)' }}>{I.bell}</span>
+            <div style={{ minWidth: 0, flex: 1 }}>
+              <p className="t">{notifStatus.missed_count === 1 ? 'Vous avez raté 1 offre' : `Vous avez raté ${notifStatus.missed_count} offres`}</p>
+              <p className="d">Activez les notifications pour ne plus rien manquer de <span className="notranslate" translate="no">{shop || 'cette boutique'}</span>.</p>
+              <button type="button" className="solid" style={{ marginTop: 10 }} onClick={enableFromBanner}>Activer les notifications</button>
+            </div>
+            <button type="button" className="close" onClick={() => setShowMissedBanner(false)} aria-label="Fermer"><X size={16} aria-hidden="true" /></button>
           </div>
         )}
 
-        {/* Automatisations: the latest message and its action button (a Wallet
-            notification cannot carry a button — tapping it opens this card) */}
-        {(() => {
-          const am = geoMsg || data?.auto_message;
-          if (!am || !am.title || hiddenMsg === am.log_id) return null;
-          return (
-            <div className="mb-4 overflow-hidden rounded-2xl border border-[#D6E4FF] bg-white shadow-[0_18px_40px_-30px_rgba(20,99,255,.6)]">
-              <div className="flex items-start gap-3 p-4">
-                <div className="min-w-0 flex-1">
-                  <p className="text-[15px] font-bold leading-snug text-[#0B1C3F]">{am.title}</p>
-                  {am.body && <p className="mt-0.5 text-[13.5px] leading-snug text-[#334155]">{am.body}</p>}
-                </div>
-                {am.image_url && <img src={am.image_url} alt="" className="h-16 w-16 shrink-0 rounded-xl object-cover" />}
-                <button type="button" aria-label="Masquer ce message" className="-mr-1 -mt-1 p-1 text-[#94A3B8]"
-                        onClick={() => { setHiddenMsg(am.log_id); setGeoMsg(null); try { localStorage.setItem('fidclic:auto_msg_hidden', am.log_id); } catch { /* private mode */ } }}>
-                  <X size={16} /></button>
+        {/* Automatisations: the latest message and its button (a Wallet notification cannot carry one) */}
+        {autoMsg && (
+          <div className="sheet">
+            <div className="note">
+              <div style={{ minWidth: 0, flex: 1 }}>
+                <p className="t" style={{ fontSize: 15 }}>{autoMsg.title}</p>
+                {autoMsg.body && <p className="d">{autoMsg.body}</p>}
               </div>
-              {am.button_url && am.button_label && (
-                <a href={am.button_url} rel="noopener"
-                   className="block border-t border-[#E6EEFB] bg-[#F1F5FF] py-3 text-center text-[14.5px] font-semibold text-[#1463FF]">{am.button_label}</a>
-              )}
+              {autoMsg.image_url && <img src={autoMsg.image_url} alt="" style={{ width: 64, height: 64, borderRadius: 14, objectFit: 'cover', flex: 'none' }} />}
+              <button type="button" className="close" aria-label="Masquer ce message" onClick={() => hideAutoMsg(autoMsg)}><X size={16} aria-hidden="true" /></button>
             </div>
-          );
-        })()}
+            {autoMsg.button_url && autoMsg.button_label && (
+              <a href={autoMsg.button_url} rel="noopener" className="msg-cta">{autoMsg.button_label}</a>
+            )}
+          </div>
+        )}
 
+        <div className="tiles">
+          <Link to={`/card/${barcodeId}/offres${q}`} className="sheet tile">
+            <span className="ico">{I.ticket}</span>Mes offres exclusives
+            {liveOfferCount > 0 && <span className="badge num">{liveOfferCount} en cours</span>}
+          </Link>
+          <Link to={`/card/${barcodeId}/partager${q}`} className="sheet tile"><span className="ico">{I.people}</span>Parrainer un proche</Link>
+          <button type="button" className="sheet tile" onClick={() => goTab('historique')}><span className="ico">{I.clock}</span>Historique</button>
+        </div>
+
+        <section className="sheet acts" aria-labelledby="wcp-acts">
+          <div className="ah">
+            <h2 id="wcp-acts">{I.pulse}Mes dernières activités</h2>
+            <button type="button" className="link" onClick={() => goTab('historique')}>Voir tout {I.chev}</button>
+          </div>
+          <ActivityRows items={(recent || []).slice(0, 3)} card={card} testId="activity-list" />
+          {recent && !recent.some((it) => activityRow(it, card)) && (
+            <p className="calm" data-testid="activity-empty">Pas encore d’activité : elle apparaîtra après votre prochaine visite.</p>
+          )}
+        </section>
+
+        {socials.length > 0 && (
+          <section className="follow" data-testid="follow-us" aria-labelledby="wcp-follow">
+            <h2 id="wcp-follow">Suivez-nous</h2>
+            <p>Restez informé de nos actualités, nouveautés et offres exclusives !</p>
+            <div className="cta">
+              <a href={socials[0].url} target="_blank" rel="noopener noreferrer" className="btn">Nous rejoindre {I.chev}</a>
+              <div className="so">
+                {socials.map((s) => (
+                  <a key={`${s.network}-${s.url}`} href={s.url} target="_blank" rel="noopener noreferrer" aria-label={s.label}>
+                    <span className={NET_CLASS[s.network] || 'gen'}>{NET[s.network] || NET.site}</span>
+                  </a>
+                ))}
+              </div>
+            </div>
+            <div className="hand" aria-hidden="true"><ShopLogo url={card.logo_url} name={shop} className="hl" /></div>
+          </section>
+        )}
+      </div>
+    </>
+  );
+
+  // ─────────────────────────────────────────────────── Ma carte
+  const cartePanel = (
+    <>
+      {tabHead('Ma carte')}
+      <div className="stack">
         {/* The card itself — the pass as it sits in Apple / Google Wallet, in the shop's colours */}
         <WalletCardErrorBoundary>
-          <div className="flex justify-center">
-            <div className="overflow-hidden rounded-[18px] shadow-[0_24px_50px_-28px_rgba(15,23,42,.6)]" style={{ width: passW }}>
+          <div style={{ display: 'flex', justifyContent: 'center' }}>
+            <div style={{ width: passW, borderRadius: 18, overflow: 'hidden', boxShadow: '0 24px 50px -28px rgba(15,23,42,.6)' }}>
               <WalletPassPreview customer={customer} tenant={tenant} card={card} width={passW} />
             </div>
           </div>
         </WalletCardErrorBoundary>
-
-        {/* A full card restarts on the next visit; its reward stays valid until handed over */}
-        {pending > 0 && (
-          <div className="mt-4 flex items-start gap-3 rounded-2xl border border-[#BFE6D3] bg-[#EAF7F0] p-4">
-            <Gift className="mt-0.5 h-5 w-5 shrink-0 text-[#0F8B58]" aria-hidden="true" />
-            <p className="text-[14px] leading-snug text-[#0B3D27]">
-              <strong>{pending > 1 ? `${pending} récompenses à récupérer` : '1 récompense à récupérer'}</strong>
-              {card.reward_description ? ` : ${card.reward_description}` : ''}. Présentez votre carte en caisse.
-            </p>
-          </div>
-        )}
-
-        <div className="mt-5 space-y-3">
-          {/* Native wallets — shown once the certificates are configured */}
-          <WalletButtons barcodeId={barcodeId} onError={showToast} />
-          <div className="grid grid-cols-3 gap-2">
-            {[[Share2, 'Partager / copier', shareCard], [Smartphone, 'Sur l’écran d’accueil', homeHelp], [Printer, 'Imprimer', () => window.print()]].map(([Icon, label, fn]) => (
-              <button key={label} type="button" onClick={fn}
-                      className="flex flex-col items-center gap-1.5 rounded-2xl bg-white px-2 py-3 text-[12.5px] font-medium text-[#0B1C3F] shadow-[0_6px_18px_-14px_rgba(15,23,42,.35)] hover:bg-[#F8FAFC]">
-                <Icon size={18} aria-hidden="true" /> {label}
-              </button>
-            ))}
-          </div>
+        {/* Native wallets — shown once the certificates are configured */}
+        <WalletButtons barcodeId={barcodeId} onError={showToast} />
+        <div className="share3">
+          {[[Share2, 'Partager / copier', shareCard], [Smartphone, 'Sur l’écran d’accueil', homeHelp], [Printer, 'Imprimer', () => window.print()]].map(([Icon, label, fn]) => (
+            <button key={label} type="button" onClick={fn} className="sheet"><Icon size={18} aria-hidden="true" /> {label}</button>
+          ))}
         </div>
-
-        {/* The rest, one tap away */}
-        <nav aria-label="Ma carte" className="mt-5 overflow-hidden rounded-3xl bg-white shadow-[0_10px_30px_-22px_rgba(15,23,42,.35)]">
-          {menu.map(({ key, icon: Icon, label, hint, to }, i) => {
-            const inner = (
-              <>
-                <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[#EAF1FF] text-[#2F6BFF]"><Icon size={18} /></span>
-                <span className="min-w-0 flex-1">
-                  <span className="block text-[15px] font-semibold text-[#0B1C3F]">{label}</span>
-                  <span className="block truncate text-[12.5px] text-[#64748B]">{hint}</span>
-                </span>
-                <ChevronRight size={18} className="shrink-0 text-[#94A3B8]" />
-              </>
-            );
-            const cls = `flex w-full items-center gap-3 px-4 py-3.5 text-left hover:bg-[#F8FAFC] ${i ? 'border-t border-[#EEF2F7]' : ''}`;
-            return to
-              ? <Link key={key} to={to} className={cls}>{inner}</Link>
-              : <button key={key} type="button" onClick={() => setSheet(key)} className={cls}>{inner}</button>;
-          })}
-        </nav>
-
-        <p className="mt-3 text-center text-[11.5px] text-[#94A3B8]">La carte se met à jour après chaque visite, dans n’importe quel navigateur.</p>
-
+        <p className="small">La carte se met à jour après chaque visite, dans n’importe quel navigateur.</p>
         {/* iOS needs the card on the home screen before it can receive notifications */}
         <InstallPwaPrompt
           context="card"
@@ -848,142 +984,232 @@ const CardView = () => {
         />
         <GeoConsentCard customerId={customer.id} tenantSlug={tenant.slug} barcodeId={barcodeId} />
       </div>
+    </>
+  );
 
-      {sheet === 'program' && (
-        <Sheet title="Le programme" onClose={() => setSheet(null)}>
-          <div className="space-y-3 text-[14px]">
-            <div className="rounded-2xl bg-[#F8FAFC] p-4">
-              <p className="text-[11.5px] font-semibold uppercase tracking-wide text-[#64748B]">Récompense</p>
-              <p className="mt-1 font-semibold text-[#0B1C3F]">🎁 {card.reward_description || 'Une récompense fidélité'}</p>
-              {programmeOf(card) === 'stamps' ? (
-                <p className="mt-1 text-[13px] text-[#475569]">Débloquée après {stampsTarget} visites — {Math.min(cycleVisits(customer), stampsTarget)} / {stampsTarget} sur cette carte.</p>
-              ) : parseInt(card.reward_points, 10) > 0 && (
-                // a points card: its reward is reached in points, not in visits (QA R7 F28)
-                <p className="mt-1 text-[13px] text-[#475569]" data-testid="programme-progress">
-                  Débloquée dès {card.reward_points} points — {Math.min(parseInt(customer.points, 10) || 0, parseInt(card.reward_points, 10))} / {card.reward_points} sur cette carte.
-                </p>
-              )}
-            </div>
-            {/* how the card earns, as the shop set it — none on a Tampons card (QA BUG-009 / R7 F28) */}
-            {earningRule(card) && (
-              <div className="rounded-2xl bg-[#F8FAFC] p-4" data-testid="programme-earning">
-                <p className="text-[11.5px] font-semibold uppercase tracking-wide text-[#64748B]">Comment gagner</p>
-                <p className="mt-1 font-semibold text-[#0B1C3F]">{earningRule(card)}</p>
-              </div>
-            )}
-            <div className="rounded-2xl bg-[#F8FAFC] p-4">
-              <p className="text-[11.5px] font-semibold uppercase tracking-wide text-[#64748B]">Votre statut</p>
-              <p className="mt-1 font-semibold text-[#0B1C3F]">
-                {({ bronze: 'Bronze', silver: 'Argent', gold: 'Or', vip: 'VIP' })[String(customer.tier || 'bronze').toLowerCase()] || customer.tier}
-                {' · '}{card.show_points !== false ? `${balanceText(card, customer.points)} · ` : ''}{customer.visits || 0} visite{(customer.visits || 0) > 1 ? 's' : ''}
-              </p>
-            </div>
+  // ─────────────────────────────────────────────────── Récompenses
+  const defis = data?.defis || {};
+  const recompensesPanel = (
+    <>
+      {tabHead('Récompenses')}
+      <div className="stack">
+        {/* A full card restarts on the next visit; its reward stays valid until handed over */}
+        {pending > 0 && (
+          <div className="good" data-testid="pending-reward">
+            <Gift size={20} aria-hidden="true" style={{ flex: 'none', marginTop: 1 }} />
+            <p><strong>{pending > 1 ? `${pending} récompenses à récupérer` : '1 récompense à récupérer'}</strong>
+              {card.reward_description ? ` : ${card.reward_description}` : ''}. Présentez votre carte en caisse.</p>
           </div>
-        </Sheet>
-      )}
-
-      {sheet === 'review' && (
-        <Sheet title="Donner mon avis" onClose={() => setSheet(null)}>
-          {reviewThanks ? (
-            <div className="rounded-2xl bg-[#EAF7F0] p-4 text-center">
-              <p className="text-[15px] font-semibold text-[#0B3D27]">Merci pour votre avis ! 🙏</p>
-              <p className="mt-1 text-[13px] text-[#0B3D27]/80">Votre retour aide {tenant.name} à progresser.</p>
-              {googleReviewUrl && (
-                <a href={googleReviewUrl} target="_blank" rel="noopener noreferrer"
-                   onClick={() => { publicAPI.googleReviewClick(customer.barcode_id).catch(() => {}); }}
-                   className="mt-3 inline-flex items-center gap-2 rounded-xl bg-white px-4 py-2 text-[14px] font-semibold text-[#0B1C3F] shadow-sm ring-1 ring-black/5">
-                  ⭐ Laissez-nous un avis sur Google
-                </a>
-              )}
-            </div>
-          ) : (
-            <div>
-              <p className="text-[14px] font-semibold text-[#0B1C3F]">Comment s’est passée votre visite ?</p>
-              <p className="text-[12.5px] text-[#64748B]">Votre note reste anonyme.</p>
-              <div className="mt-3 flex items-center gap-2">
-                <span className="w-4 text-[12px] text-[#64748B]">1</span>
-                <input type="range" min="1" max="10" step="1" value={reviewRating}
-                       onChange={(e) => setReviewRating(parseInt(e.target.value, 10))} className="flex-1 accent-[#2F6BFF]" aria-label="Note sur 10" />
-                <span className="w-6 text-[12px] text-[#64748B]">10</span>
-              </div>
-              <p className="mt-1 text-center"><span className="text-[30px] font-bold text-[#2F6BFF]">{reviewRating}</span><span className="text-[14px] text-[#64748B]">/10</span></p>
-              <textarea value={reviewText} onChange={(e) => setReviewText(e.target.value.slice(0, 500))} rows={3}
-                        placeholder="Un mot pour l’équipe ? (optionnel — service, propreté, accueil…)"
-                        className="mt-2 w-full resize-none rounded-xl border border-[#E2E8F0] bg-white p-3 text-[16px]" />
-              {reviewError && <p className="mt-2 text-[12.5px] text-[#B91C1C]">{reviewError}</p>}
-              <button type="button" disabled={reviewSubmitting}
-                      onClick={async () => {
-                        try {
-                          setReviewSubmitting(true);
-                          setReviewError(null);
-                          const { data: sent } = await publicAPI.submitReview({
-                            customer_id: customer.id, barcode_id: customer.barcode_id, rating: reviewRating, text: reviewText,
-                            visit_id: customer.last_visit_id || undefined, branch_id: customer.branch_id || undefined,
-                          });
-                          setGoogleReviewUrl(sent?.google_review_url || null);
-                          setReviewThanks(true);
-                          setReviewText('');
-                        } catch (e) {
-                          setReviewError(e?.response?.data?.detail || 'Impossible d\'envoyer votre avis.');
-                        } finally {
-                          setReviewSubmitting(false);
-                        }
-                      }}
-                      className="mt-3 h-12 w-full rounded-2xl bg-[#1463FF] text-[15px] font-semibold text-white disabled:opacity-60">
-                {reviewSubmitting ? 'Envoi…' : 'Envoyer mon avis'}
-              </button>
+        )}
+        <section className="sheet sec" aria-labelledby="wcp-prog">
+          <h2 id="wcp-prog"><Gift size={18} aria-hidden="true" /> Le programme</h2>
+          <div className="kv">
+            <p className="k" style={{ margin: 0 }}>Récompense</p>
+            <p className="v" style={{ marginBottom: 0 }}>🎁 {card.reward_description || 'Une récompense fidélité'}</p>
+            {programmeOf(card) === 'stamps' ? (
+              <p className="s" style={{ marginBottom: 0 }}>Débloquée après {stampsTarget} visites — {Math.min(cycleVisits(customer), stampsTarget)} / {stampsTarget} sur cette carte.</p>
+            ) : parseInt(card.reward_points, 10) > 0 && (
+              // a points card: its reward is reached in points, not in visits (QA R7 F28)
+              <p className="s" style={{ marginBottom: 0 }} data-testid="programme-progress">
+                Débloquée dès {card.reward_points} points — {Math.min(parseInt(customer.points, 10) || 0, parseInt(card.reward_points, 10))} / {card.reward_points} sur cette carte.
+              </p>
+            )}
+          </div>
+          {/* how the card earns, as the shop set it — none on a Tampons card (QA BUG-009 / R7 F28) */}
+          {earningRule(card) && (
+            <div className="kv" data-testid="programme-earning">
+              <p className="k" style={{ margin: 0 }}>Comment gagner</p>
+              <p className="v" style={{ marginBottom: 0 }}>{earningRule(card)}</p>
             </div>
           )}
-        </Sheet>
-      )}
+          <div className="kv">
+            <p className="k" style={{ margin: 0 }}>Votre statut</p>
+            <p className="v" style={{ marginBottom: 0 }}>
+              {tier}{' · '}{card.show_points !== false ? `${balanceText(card, customer.points)} · ` : ''}{customer.visits || 0} visite{(customer.visits || 0) > 1 ? 's' : ''}
+            </p>
+          </div>
+        </section>
+        {/* « Défi en cours » (Campagnes › Défi): the soonest end first, then what was won */}
+        {(defis.running || []).map((x) => (
+          <section key={x.id} className="defi" data-testid="defi-running">
+            <p className="k" style={{ margin: 0, display: 'flex', alignItems: 'center', gap: 6 }}><Flame size={16} aria-hidden="true" /> Défi en cours</p>
+            <p className="t">{x.title}</p>
+            <p className="d">Faites {x.target} visite{x.target > 1 ? 's' : ''}{x.end_date ? ` avant le ${fmtDay(x.end_date)}` : ''}{x.count_mode === 'per_day' ? ' (une par jour)' : ''}{x.reward ? ` · 🎁 ${x.reward}` : ''}</p>
+            <div className="bar" role="progressbar" aria-label="Progression du défi" aria-valuemin={0} aria-valuemax={x.target} aria-valuenow={Math.min(x.progress || 0, x.target)}>
+              <i style={{ width: `${Math.min(100, ((x.progress || 0) / Math.max(1, x.target)) * 100)}%` }} />
+            </div>
+            <p className="d num">{Math.min(x.progress || 0, x.target)} / {x.target}{x.days_left != null ? ` · ${x.days_left <= 1 ? 'Dernier jour' : `encore ${x.days_left} jours`}` : ''}</p>
+          </section>
+        ))}
+        {(defis.won || []).map((w) => (
+          <section key={w.id} className="defi won" data-testid="defi-won">
+            <p className="k" style={{ margin: 0 }}>{w.kind === 'parrainage' ? '🎁 Parrainage' : '🏆 Défi réussi'}</p>
+            <p className="t">{w.reward}</p>
+            <p className="d">{w.kind === 'parrainage' ? 'Votre récompense de parrainage' : `« ${w.title} »`} — présentez votre carte en caisse{w.expires_at ? `, avant le ${fmtDay(w.expires_at)}` : ''}.</p>
+          </section>
+        ))}
+        <Link to={`/card/${barcodeId}/offres${q}`} className="ghostbtn">Voir mes offres {I.chev}</Link>
+      </div>
+    </>
+  );
 
-      {sheet === 'about' && <DetailsDrawer tenant={tenant} card={card} onClose={() => setSheet(null)} />}
-
-      {sheet === 'settings' && (
-        <Sheet title="Paramètres" onClose={() => setSheet(null)}>
-          <div className="divide-y divide-[#EEF2F7] rounded-2xl bg-[#F8FAFC]">
-            <ToggleRow icon={<RefreshCw size={18} />} label="Mise à jour automatique" hint="Met à jour votre carte sans action de votre part"
+  // ─────────────────────────────────────────────────── Mon compte
+  const details = card.details || {};
+  const has = (v) => v && String(v).trim().length > 0;
+  const compteRows = [
+    ['about', details.about], ['hours', details.hours], ['address', details.address || tenant.address],
+    ['phone', details.phone || tenant.phone], ['website', details.website || tenant.website],
+  ];
+  const comptePanel = (
+    <>
+      {tabHead('Mon compte')}
+      <div className="stack">
+        <section className="sheet sec" aria-labelledby="wcp-settings">
+          <h2 id="wcp-settings"><Settings size={18} aria-hidden="true" /> Paramètres</h2>
+          <div className="list">
+            <ToggleRow icon={<RefreshCw size={18} aria-hidden="true" />} label="Mise à jour automatique" hint="Met à jour votre carte sans action de votre part"
                        value={prefs.auto_update} onToggle={() => togglePref('auto_update')} disabled={savingPrefs} />
-            <ToggleRow icon={<Bell size={18} />} label="Autoriser les notifications" hint="Recevez les nouvelles offres et rappels"
+            <ToggleRow icon={<Bell size={18} aria-hidden="true" />} label="Autoriser les notifications" hint="Recevez les nouvelles offres et rappels"
                        value={prefs.push_enabled} onToggle={() => togglePref('push_enabled')} disabled={savingPrefs} />
           </div>
-          <button type="button"
-                  onClick={async () => {
-                    try {
-                      const { data: d = {} } = await api.post(`/card/${customer.barcode_id}/test-push`);
-                      if (d.sent > 0) showToast(`Notification envoyée à ${d.sent} appareil${d.sent > 1 ? 's' : ''}.`);
-                      else if (d.error === 'no_subscription') showToast('Activez d’abord les notifications ci-dessus.');
-                      else if (d.error === 'vapid_not_configured') showToast('Notifications non configurées (contactez le commerçant).');
-                      else showToast(`Échec : ${d.error || 'inconnu'}`);
-                    } catch (e) { showToast('Erreur réseau lors du test.'); }
-                  }}
-                  className="mt-3 flex w-full items-center justify-center gap-2 rounded-2xl border border-[#2F6BFF] py-3 text-[14px] font-semibold text-[#2F6BFF]">
-            <Bell size={15} /> Envoyer une notification test
+          <button type="button" onClick={testPush} className="ghostbtn" style={{ marginTop: 12 }}>
+            <Bell size={15} aria-hidden="true" /> Envoyer une notification test
           </button>
-          <p className="mb-2 mt-6 flex items-center gap-1.5 text-[11.5px] font-semibold uppercase tracking-wide text-[#64748B]"><ShieldCheck size={13} /> Mes données (RGPD)</p>
-          <div className="divide-y divide-[#EEF2F7] rounded-2xl bg-[#F8FAFC]">
-            <button type="button" onClick={downloadMyData} className="flex w-full items-center gap-3 p-4 text-left">
-              <Download size={18} className="shrink-0 text-[#2F6BFF]" />
-              <span><span className="block text-[14px] font-medium text-[#0B1C3F]">Télécharger mes données</span><span className="block text-[12px] text-[#64748B]">Profil, visites, notifications — fichier JSON</span></span>
+        </section>
+
+        {recentVisit && (
+          <section className="sheet sec" aria-labelledby="wcp-review">
+            <h2 id="wcp-review"><Star size={18} aria-hidden="true" /> Donner mon avis</h2>
+            {reviewThanks ? (
+              <div className="good" style={{ display: 'block', textAlign: 'center' }}>
+                <p style={{ fontWeight: 700 }}>Merci pour votre avis ! 🙏</p>
+                <p style={{ marginTop: 4, fontSize: 13 }}>Votre retour aide <span className="notranslate" translate="no">{shop}</span> à progresser.</p>
+                {googleReviewUrl && (
+                  <a href={googleReviewUrl} target="_blank" rel="noopener noreferrer" className="solid" style={{ marginTop: 12 }}
+                     onClick={() => { publicAPI.googleReviewClick(customer.barcode_id).catch(() => {}); }}>
+                    ⭐ Laissez-nous un avis sur Google
+                  </a>
+                )}
+              </div>
+            ) : (
+              <div>
+                <p style={{ margin: 0, fontSize: 14, fontWeight: 600 }}>Comment s’est passée votre visite ?</p>
+                <p style={{ margin: '2px 0 0', fontSize: 12.5, color: 'var(--muted)' }}>Votre note reste anonyme.</p>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 6 }}>
+                  <span style={{ fontSize: 12, color: 'var(--muted)' }}>1</span>
+                  <input type="range" min="1" max="10" step="1" value={reviewRating} aria-label="Note sur 10"
+                         onChange={(e) => setReviewRating(parseInt(e.target.value, 10))} />
+                  <span style={{ fontSize: 12, color: 'var(--muted)' }}>10</span>
+                </div>
+                <p style={{ margin: 0, textAlign: 'center' }}><span className="num" style={{ fontSize: 30, fontWeight: 800, color: 'var(--brand-ink)' }}>{reviewRating}</span><span style={{ fontSize: 14, color: 'var(--muted)' }}>/10</span></p>
+                <textarea value={reviewText} onChange={(e) => setReviewText(e.target.value.slice(0, 500))} rows={3} aria-label="Votre commentaire"
+                          placeholder="Un mot pour l’équipe ? (optionnel — service, propreté, accueil…)" style={{ marginTop: 8 }} />
+                {reviewError && <p style={{ margin: '8px 0 0', fontSize: 12.5, color: '#B42318' }}>{reviewError}</p>}
+                <button type="button" disabled={reviewSubmitting} onClick={submitReview} className="solid wide" style={{ marginTop: 12, minHeight: 48 }}>
+                  {reviewSubmitting ? 'Envoi…' : 'Envoyer mon avis'}
+                </button>
+              </div>
+            )}
+          </section>
+        )}
+
+        <section className="sheet sec" aria-labelledby="wcp-about">
+          <h2 id="wcp-about"><Store size={18} aria-hidden="true" /> À propos de <span className="notranslate" translate="no">{shop || 'la boutique'}</span></h2>
+          <div className="about">
+            {has(details.about) && <div><p className="k">À propos</p><p className="v">{details.about}</p></div>}
+            {has(details.hours) && <div><p className="k"><Clock size={12} aria-hidden="true" /> Horaires</p><p className="v notranslate" translate="no">{details.hours}</p></div>}
+            {has(details.address || tenant.address) && <div><p className="k"><MapPin size={12} aria-hidden="true" /> Adresse</p><p className="v">{details.address || tenant.address}</p></div>}
+            {has(details.phone || tenant.phone) && <div><p className="k"><Phone size={12} aria-hidden="true" /> Téléphone</p><a className="v" href={`tel:${details.phone || tenant.phone}`}>{details.phone || tenant.phone}</a></div>}
+            {has(details.website || tenant.website) && <div><p className="k"><Globe size={12} aria-hidden="true" /> Site web</p><a className="v" href={details.website || tenant.website} target="_blank" rel="noopener noreferrer">{details.website || tenant.website}</a></div>}
+            {(has(details.instagram) || has(details.facebook)) && (
+              <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap' }}>
+                {has(details.instagram) && <a className="v" href={details.instagram.startsWith('http') ? details.instagram : `https://instagram.com/${details.instagram.replace('@', '')}`} target="_blank" rel="noopener noreferrer">Instagram : {details.instagram}</a>}
+                {has(details.facebook) && <a className="v" href={details.facebook.startsWith('http') ? details.facebook : `https://facebook.com/${details.facebook}`} target="_blank" rel="noopener noreferrer">Facebook : {details.facebook}</a>}
+              </div>
+            )}
+            {(details.custom_sections || []).map((s, i) => (has(s.title) || has(s.body) ? (
+              <div key={i}>{has(s.title) && <p className="k">{s.title}</p>}<p className="v">{s.body}</p></div>
+            ) : null))}
+            {!compteRows.some(([, v]) => has(v)) && (details.custom_sections || []).length === 0 && (
+              <p className="calm" style={{ padding: 0 }}>Le commerçant n'a pas encore ajouté de détails.</p>
+            )}
+          </div>
+        </section>
+
+        <section className="sheet sec" aria-labelledby="wcp-rgpd">
+          <h2 id="wcp-rgpd"><ShieldCheck size={18} aria-hidden="true" /> Mes données (RGPD)</h2>
+          <div className="list">
+            <button type="button" onClick={downloadMyData} className="li-row">
+              <Download size={18} aria-hidden="true" />
+              <span><span className="lt">Télécharger mes données</span><span className="ls">Profil, visites, notifications — fichier JSON</span></span>
             </button>
-            <button type="button" onClick={deleteCard} className="flex w-full items-center gap-3 p-4 text-left">
-              <Trash2 size={18} className="shrink-0 text-[#B45309]" />
-              <span><span className="block text-[14px] font-medium text-[#0B1C3F]">Supprimer la carte</span><span className="block text-[12px] text-[#64748B]">Retire la carte ; vos visites restent chez le commerçant</span></span>
+            <button type="button" onClick={deleteCard} className="li-row">
+              <Trash2 size={18} aria-hidden="true" />
+              <span><span className="lt">Supprimer la carte</span><span className="ls">Retire la carte ; vos visites restent chez le commerçant</span></span>
             </button>
-            <button type="button" onClick={forgetMe} className="flex w-full items-center gap-3 p-4 text-left">
-              <XCircle size={18} className="shrink-0 text-[#B91C1C]" />
-              <span><span className="block text-[14px] font-medium text-[#B91C1C]">Supprimer mes données personnelles</span><span className="block text-[12px] text-[#64748B]">Effacement définitif et irréversible (droit à l’oubli)</span></span>
+            <button type="button" onClick={forgetMe} className="li-row danger">
+              <XCircle size={18} aria-hidden="true" />
+              <span><span className="lt">Supprimer mes données personnelles</span><span className="ls">Effacement définitif et irréversible (droit à l’oubli)</span></span>
             </button>
           </div>
-          <p className="mt-4 text-center text-[12px] text-[#94A3B8]">{customer.name}{customer.email ? ` · ${customer.email}` : ''}</p>
-        </Sheet>
-      )}
+        </section>
+        <p className="small notranslate" translate="no">{customer.name}{customer.email ? ` · ${customer.email}` : ''}</p>
+      </div>
+    </>
+  );
 
-      {toast && (
-        <div role="status" className="fixed bottom-6 left-1/2 z-[60] max-w-[90vw] -translate-x-1/2 rounded-2xl bg-[#0B1C3F] px-5 py-2.5 text-center text-[13.5px] text-white shadow-lg">
-          {toast}
+  // ─────────────────────────────────────────────────── Historique (from « Voir tout » / the tile)
+  const historyPanel = (
+    <>
+      {tabHead('Historique', () => (location.state?.cardTab ? navigate(-1) : goTab('accueil')))}
+      <div className="stack">
+        <section className="sheet acts" aria-label="Toutes mes activités">
+          <ActivityRows items={history.items} card={card} testId="history-list" />
+          {history.loaded && !history.items.some((it) => activityRow(it, card)) && (
+            <p className="calm">Pas encore d’activité : elle apparaîtra après votre prochaine visite.</p>
+          )}
+          {!history.loaded && <p className="calm">Chargement…</p>}
+        </section>
+        {history.next && (
+          <button type="button" className="ghostbtn" disabled={history.busy} onClick={() => loadHistory(history.next)}>
+            {history.busy ? 'Chargement…' : 'Voir plus'}
+          </button>
+        )}
+      </div>
+    </>
+  );
+
+  const panels = { accueil: home, carte: cartePanel, recompenses: recompensesPanel, compte: comptePanel, historique: historyPanel };
+  const tabLabel = TAB_DEFS.find((t) => t.key === tab)?.label || 'Historique';
+
+  return (
+    <div className="wcp" data-testid="card-page" style={themeVars(theme)}>
+      <div className="wcp-col" role="tabpanel" id={`wcp-panel-${tab}`}
+            aria-labelledby={tab === 'historique' ? undefined : `wcp-tab-${tab}`} aria-label={tab === 'historique' ? tabLabel : undefined}>
+        {panels[tab] || home}
+      </div>
+
+      <nav className="wcp-nav" aria-label="Ma carte en ligne">
+        <div role="tablist" aria-label="Rubriques de la carte">
+          {TAB_DEFS.map((t) => (
+            <button key={t.key} type="button" role="tab" id={`wcp-tab-${t.key}`}
+                    aria-selected={tab === t.key} aria-controls={tab === t.key ? `wcp-panel-${t.key}` : undefined}
+                    tabIndex={tab === t.key || (tab === 'historique' && t.key === 'accueil') ? 0 : -1}
+                    onClick={() => goTab(t.key)}
+                    onKeyDown={(e) => {
+                      if (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft') return;
+                      const i = TAB_DEFS.findIndex((x) => x.key === t.key);
+                      const next = TAB_DEFS[(i + (e.key === 'ArrowRight' ? 1 : TAB_DEFS.length - 1)) % TAB_DEFS.length];
+                      goTab(next.key);
+                      setTimeout(() => document.getElementById(`wcp-tab-${next.key}`)?.focus(), 0);
+                    }}>
+              {t.icon}{t.label}
+            </button>
+          ))}
         </div>
-      )}
+      </nav>
+
+      {toast && <div role="status" className="wcp-toast">{toast}</div>}
 
       {/* « Voir l'offre » on the back of the Wallet pass (?offre=) opens that campaign here */}
       {openedNotification && (
@@ -994,22 +1220,18 @@ const CardView = () => {
   );
 };
 
-// A bottom sheet for the menu's rows (Le programme, Avis, Paramètres).
-function Sheet({ title, onClose, children }) {
-  return (
-    <div role="dialog" aria-modal="true" aria-label={title} onClick={onClose}
-         className="fixed inset-0 z-50 flex items-end justify-center bg-[#0B1C3F]/50 sm:items-center sm:p-4">
-      <div onClick={(e) => e.stopPropagation()}
-           className="max-h-[88vh] w-full max-w-[520px] overflow-y-auto rounded-t-3xl bg-white p-5 shadow-2xl sm:rounded-3xl">
-        <div className="mb-4 flex items-center justify-between gap-3">
-          <h2 className="text-[19px] font-bold text-[#0B1C3F]">{title}</h2>
-          <button type="button" onClick={onClose} aria-label="Fermer" className="rounded-full p-1.5 text-[#64748B] hover:bg-[#F1F5F9]"><X size={18} /></button>
-        </div>
-        {children}
-      </div>
-    </div>
-  );
-}
+const ToggleRow = ({ icon, label, hint, value, onToggle, disabled }) => (
+  <div className="li-row">
+    {icon}
+    <span style={{ flex: 1, minWidth: 0 }}>
+      <span className="lt">{label}</span>
+      <span className="ls">{hint}</span>
+    </span>
+    <button type="button" role="switch" aria-checked={!!value} aria-label={label} onClick={onToggle} disabled={disabled} className="switch-hit">
+      <span className="switch" aria-hidden="true" />
+    </button>
+  </div>
+);
 
 // ───────────────────────────────────────────────────────────────────────
 // NotificationDetailModal — full-screen-ish modal for one notification.
@@ -1134,326 +1356,6 @@ function NotificationDetailModal({ notification, tenant, card, customerId, onClo
     </div>
   );
 }
-
-// ---------------------------------------------------------------------------
-// Wallet pass — applies the modern card-template schema
-// ---------------------------------------------------------------------------
-const WalletPass = ({ customer, tenant, card, activeOffer, onOpenDetails }) => {
-  const design = card.design || {};
-  const primary = card.primary_color || design.primary_color || '#171412';
-  const secondary = card.secondary_color || design.secondary_color || '#B85C38';
-  const accent = card.accent_color || design.accent_color || '#D4A574';
-  const textColor = design.text_color || '#FFFFFF';
-
-  const elements = card.elements || {};
-  const stampStyle = card.stamp_style || 'hexagon';
-  const showMeter = card.show_meter !== false;
-  const promotion = card.promotion || { enabled: false };
-  const stampsTarget = card.reward_threshold || 10;
-  const stampsEarned = Math.min(cycleVisits(customer), stampsTarget);   // THIS card (lib/cardCycle)
-  const pointsRemaining = Math.max(0, stampsTarget - stampsEarned);
-
-  const ctx = {
-    name: customer.name, tier: customer.tier,
-    points: customer.points, points_remaining: pointsRemaining,
-    birthday: customer.birthday, business_name: tenant.name,
-    offer_title: activeOffer?.active ? activeOffer.title : '',
-  };
-
-  const hasElements = elements && Object.keys(elements).some(k => elements[k]?.visible !== false);
-
-  return (
-    <>
-      <div className="rounded-2xl shadow-xl overflow-hidden relative" style={{ background: `linear-gradient(${design.gradient_direction || '135deg'}, ${primary} 0%, ${secondary} 100%)`, color: textColor }}>
-        {/* Promotion mode — replaces the header region */}
-        {promotion.enabled ? (
-          <div className="p-6">
-            <div className="rounded-xl px-5 py-6 text-center relative overflow-hidden" style={{ background: promotion.background_color || accent, color: promotion.text_color || '#FFFFFF', backgroundImage: promotion.image_url ? `url(${promotion.image_url})` : undefined, backgroundSize: 'cover', backgroundPosition: 'center' }}>
-              {promotion.image_url && <div className="absolute inset-0 bg-black/40" />}
-              <div className="relative">
-                <p className="text-xs uppercase tracking-widest opacity-80 mb-1">Avantage exclusif fidélité</p>
-                <p className="text-3xl font-black leading-tight" style={{ fontFamily: 'Cormorant Garamond' }}>{promotion.title || 'Promotion'}</p>
-                {promotion.subtitle && <p className="text-sm opacity-90 mt-1 font-semibold">{promotion.subtitle}</p>}
-                {promotion.body && <p className="text-xs opacity-80 mt-3 leading-snug whitespace-pre-wrap">{promotion.body}</p>}
-                {promotion.link && (
-                  <a href={promotion.link} target="_blank" rel="noreferrer" className="mt-4 inline-block bg-white/20 backdrop-blur text-sm font-bold px-5 py-2 rounded-full hover:bg-white/30 transition-colors">
-                    {promotion.link_label || 'En savoir plus'}
-                  </a>
-                )}
-                {promotion.expires_at && (
-                  <p className="text-[10px] opacity-70 mt-3 flex items-center justify-center gap-1">
-                    <Clock size={10} /> expire le {new Date(promotion.expires_at).toLocaleDateString('fr-FR')}
-                  </p>
-                )}
-              </div>
-            </div>
-          </div>
-        ) : hasElements ? (
-          // Free-form element layout
-          <div className="relative h-[160px] border-b border-white/10">
-            {Object.keys(elements).filter(id => ['logo', 'business_name', 'customer_name'].includes(id)).map(id => (
-              <RenderElement key={id} id={id} cfg={elements[id]} ctx={ctx} tpl={card} />
-            ))}
-          </div>
-        ) : (
-          // Legacy fallback header
-          <div className="px-6 pt-6 flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              {card.logo_url ? (
-                <img src={card.logo_url} alt={tenant.name} className="w-11 h-11 rounded-lg object-cover border border-white/30" />
-              ) : (
-                <div className="w-11 h-11 rounded-lg flex items-center justify-center font-bold text-lg" style={{ background: accent, color: secondary }}>
-                  {tenant.name?.charAt(0) || '?'}
-                </div>
-              )}
-              <div>
-                <p className="font-bold text-lg leading-none">{tenant.name}</p>
-                <p className="text-xs opacity-80 mt-0.5">Programme de Fidélité</p>
-              </div>
-            </div>
-            <div className="text-right">
-              <p className="text-[10px] uppercase tracking-wider opacity-70">Membre depuis</p>
-              <p className="text-xs font-semibold">
-                {customer.member_since ? new Date(customer.member_since).toLocaleDateString('fr-FR', { month: 'short', year: 'numeric' }) : '—'}
-              </p>
-            </div>
-          </div>
-        )}
-
-        {/* Active offer banner — only when not already in promotion mode */}
-        {!promotion.enabled && activeOffer?.active && activeOffer?.title && (
-          <div className="mx-6 mt-5 rounded-xl p-4 text-center" style={{ background: accent, color: secondary }}>
-            <p className="text-2xl font-black tracking-tight uppercase leading-tight" style={{ fontFamily: 'Cormorant Garamond' }}>{activeOffer.title}</p>
-            {activeOffer.description && <p className="text-xs mt-1 opacity-90">{activeOffer.description}</p>}
-          </div>
-        )}
-
-        {/* Stamps */}
-        <div className="px-6 py-5">
-          <StampVisual style={stampStyle} filled={stampsEarned} total={stampsTarget} accent={accent} />
-          {showMeter && stampStyle !== 'none' && (
-            <div className="mt-3">
-              <div className="flex justify-between text-[11px] opacity-80 mb-1">
-                <span>Progression récompense</span><span>{stampsEarned}/{stampsTarget}</span>
-              </div>
-              <div className="h-1.5 rounded-full overflow-hidden bg-white/20">
-                <div className="h-full rounded-full" style={{ width: `${(stampsEarned / stampsTarget) * 100}%`, background: accent }} />
-              </div>
-              <p className="text-[11px] opacity-80 mt-2">🎁 {card.reward_description}</p>
-            </div>
-          )}
-        </div>
-
-        {/* Element bottom strip: points / tier / birthday / reward_hint */}
-        {hasElements && (
-          <div className="relative h-[110px] border-t border-white/10">
-            {Object.keys(elements).filter(id => ['points', 'tier', 'birthday', 'reward_hint'].includes(id)).map(id => (
-              <RenderElement key={id} id={id} cfg={elements[id]} ctx={ctx} tpl={card} />
-            ))}
-          </div>
-        )}
-
-        {/* QR ONLY. The 1D Code 128 barcode that used to stack below
-            this block was removed per owner spec — modern POS scanners
-            read QR fine, and one code looks much cleaner. To bring back
-            the 1D fallback (for old laser scanners), restore
-            <Code128Barcode value={customer.barcode_id} ... /> here. */}
-        <div className="px-6 pb-5 pt-2">
-          {/* On the card's own colour, with its ink — no white plate. The
-              quiet zone the plate used to give the code is now marginSize. */}
-          <div className="mx-auto inline-block">
-            <QRCodeSVG value={cardUrl(customer.barcode_id)} size={200} level="M"
-                       marginSize={4} bgColor={primary} fgColor={textColor} />
-          </div>
-          <p className="mt-2 font-mono text-xs opacity-90 text-center">{customer.barcode_id}</p>
-        </div>
-
-        {/* Counter row — always shown as quick glance info */}
-        {!hasElements && (
-          <div className="px-6 pb-4 grid grid-cols-3 gap-3 text-center">
-            <div className="bg-white/10 rounded-lg py-2">
-              <p className="text-xs opacity-80">Visites</p>
-              <p className="font-bold text-lg">{customer.visits}</p>
-            </div>
-            <div className="bg-white/10 rounded-lg py-2">
-              <p className="text-xs opacity-80">{balanceLabel(card)}</p>
-              <p className="font-bold text-lg">{balanceText(card, customer.points).replace(' pts', '')}</p>
-            </div>
-            <div className="bg-white/10 rounded-lg py-2">
-              <p className="text-xs opacity-80">Statut</p>
-              <p className="font-bold text-sm uppercase">{customer.tier}</p>
-            </div>
-          </div>
-        )}
-
-        {/* Tap-to-expand call-to-action */}
-        <button
-          onClick={onOpenDetails}
-          className="w-full flex items-center justify-center gap-1.5 py-2.5 text-[11px] uppercase tracking-widest border-t border-white/10 hover:bg-white/5 transition-colors"
-          style={{ color: textColor }}
-        >
-          Touchez pour plus de détails <ChevronDown size={12} />
-        </button>
-      </div>
-
-      {/* Save / share actions — see MyWalletCardPage for rationale. */}
-      <div className="grid grid-cols-3 gap-2 mt-5">
-        <button
-          onClick={async (e) => {
-            e.stopPropagation();
-            try {
-              if (navigator.share) {
-                await navigator.share({ title: 'Ma carte de fidélité', url: window.location.href });
-              } else {
-                await navigator.clipboard.writeText(window.location.href);
-                alert('Lien copié.');
-              }
-            } catch (_e) { /* user cancelled */ }
-          }}
-          className="bg-[#171412] text-white py-3 rounded-xl font-medium text-sm"
-        >
-          📤 Partager
-        </button>
-        <button
-          onClick={(e) => {
-            e.stopPropagation();
-            const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
-            alert(isIOS
-              ? "Touchez le bouton Partager dans Safari, puis 'Sur l'écran d'accueil'."
-              : "Menu Chrome → 'Ajouter à l'écran d'accueil'.");
-          }}
-          className="bg-[#B85C38] text-white py-3 rounded-xl font-medium text-sm"
-        >
-          📱 Accueil
-        </button>
-        <button
-          onClick={(e) => { e.stopPropagation(); window.print(); }}
-          className="bg-white border border-[#E9E5E0] py-3 rounded-xl font-medium text-sm"
-          style={{ color: '#171412' }}
-        >
-          🖨️ Imprimer
-        </button>
-      </div>
-
-      {/* Push notification preview */}
-      <div className="mt-6 bg-white/70 backdrop-blur rounded-xl p-4 border border-[#E9E5E0]">
-        <div className="flex items-center gap-2 mb-2">
-          <Sparkles size={16} className="text-[#B85C38]" />
-          <h3 className="text-sm font-semibold text-[#171412]">Aperçu de la notification push</h3>
-        </div>
-        <div className="bg-[#171412]/5 rounded-lg p-3 flex gap-3">
-          <div className="w-9 h-9 rounded-lg flex items-center justify-center font-bold text-sm" style={{ background: primary, color: textColor }}>
-            {tenant.name?.charAt(0)}
-          </div>
-          <div className="flex-1">
-            <p className="text-[11px] font-semibold text-[#171412]">{tenant.name}</p>
-            <p className="text-xs text-[#57504A] leading-snug">
-              {promotion.enabled
-                ? `${promotion.title} — ${promotion.subtitle || 'Nouvelle offre disponible'}`
-                : activeOffer?.active
-                ? `${activeOffer.title} — ${activeOffer.description}`
-                : 'Nouvelle offre disponible dans votre carte de fidélité'}
-            </p>
-            <p className="text-[10px] text-[#8D857D] mt-0.5">maintenant</p>
-          </div>
-        </div>
-      </div>
-    </>
-  );
-};
-
-// ---------------------------------------------------------------------------
-// Details drawer — opened when customer taps "pour plus de détails"
-// ---------------------------------------------------------------------------
-const DetailsDrawer = ({ tenant, card, onClose }) => {
-  const details = card.details || {};
-  const has = (v) => v && String(v).trim().length > 0;
-  return (
-    <div className="fixed inset-0 bg-black/50 flex items-end sm:items-center justify-center z-50" onClick={onClose}>
-      <div className="bg-white w-full sm:max-w-lg rounded-t-3xl sm:rounded-3xl max-h-[85vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
-        <div className="sticky top-0 bg-white border-b border-[#E9E5E0] flex items-center justify-between px-5 py-3">
-          <h2 className="font-['Playfair_Display'] text-xl font-bold text-[#171412]">À propos de {tenant.name}</h2>
-          <button onClick={onClose} className="p-2 hover:bg-[#F5F5F4] rounded-lg"><X size={18} /></button>
-        </div>
-        <div className="p-5 space-y-4 text-sm">
-          {has(details.about) && (
-            <div>
-              <p className="text-xs font-bold text-[#8D857D] uppercase tracking-wider mb-1">À propos</p>
-              <p className="text-[#171412] whitespace-pre-wrap leading-relaxed">{details.about}</p>
-            </div>
-          )}
-          {has(details.hours) && (
-            <div>
-              <p className="text-xs font-bold text-[#8D857D] uppercase tracking-wider mb-1 flex items-center gap-1"><Clock size={12} /> Horaires</p>
-              <p className="text-[#171412] whitespace-pre-wrap">{details.hours}</p>
-            </div>
-          )}
-          {has(details.address || tenant.address) && (
-            <div>
-              <p className="text-xs font-bold text-[#8D857D] uppercase tracking-wider mb-1 flex items-center gap-1"><MapPin size={12} /> Adresse</p>
-              <p className="text-[#171412]">{details.address || tenant.address}</p>
-            </div>
-          )}
-          {has(details.phone || tenant.phone) && (
-            <div>
-              <p className="text-xs font-bold text-[#8D857D] uppercase tracking-wider mb-1 flex items-center gap-1"><Phone size={12} /> Téléphone</p>
-              <a href={`tel:${details.phone || tenant.phone}`} className="text-[#B85C38] underline">{details.phone || tenant.phone}</a>
-            </div>
-          )}
-          {has(details.website || tenant.website) && (
-            <div>
-              <p className="text-xs font-bold text-[#8D857D] uppercase tracking-wider mb-1 flex items-center gap-1"><Globe size={12} /> Site web</p>
-              <a href={details.website || tenant.website} target="_blank" rel="noreferrer" className="text-[#B85C38] underline break-all">{details.website || tenant.website}</a>
-            </div>
-          )}
-          {(has(details.instagram) || has(details.facebook)) && (
-            <div className="flex gap-3">
-              {has(details.instagram) && <a href={details.instagram.startsWith('http') ? details.instagram : `https://instagram.com/${details.instagram.replace('@','')}`} target="_blank" rel="noreferrer" className="flex items-center gap-1 text-[#B85C38] text-sm">Instagram: {details.instagram}</a>}
-              {has(details.facebook) && <a href={details.facebook.startsWith('http') ? details.facebook : `https://facebook.com/${details.facebook}`} target="_blank" rel="noreferrer" className="flex items-center gap-1 text-[#B85C38] text-sm">Facebook: {details.facebook}</a>}
-            </div>
-          )}
-          {(details.custom_sections || []).map((s, i) => has(s.title) || has(s.body) ? (
-            <div key={i}>
-              {has(s.title) && <p className="text-xs font-bold text-[#8D857D] uppercase tracking-wider mb-1">{s.title}</p>}
-              <p className="text-[#171412] whitespace-pre-wrap leading-relaxed">{s.body}</p>
-            </div>
-          ) : null)}
-          {!has(details.about) && !has(details.hours) && !has(details.address) && !has(details.phone) && !has(details.website) && (details.custom_sections || []).length === 0 && (
-            <p className="text-sm text-[#8D857D] italic text-center py-6">Le commerçant n'a pas encore ajouté de détails.</p>
-          )}
-        </div>
-      </div>
-    </div>
-  );
-};
-
-const ToggleRow = ({ icon, label, hint, value, onToggle, disabled }) => (
-  <div className="flex items-center gap-3 p-4">
-    <div className="text-[#2F6BFF]">{icon}</div>
-    <div className="flex-1">
-      <p className="font-medium text-sm text-[#171412]">{label}</p>
-      <p className="text-xs text-[#57504A]">{hint}</p>
-    </div>
-    <button
-      onClick={onToggle}
-      disabled={disabled}
-      className={`relative w-11 h-6 shrink-0 rounded-full transition-colors ${value ? 'bg-[#2F6BFF]' : 'bg-[#CBD5E1]'} ${disabled ? 'opacity-60' : ''}`}
-      aria-pressed={value}
-    >
-      <span className={`absolute top-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform ${value ? 'translate-x-5' : 'translate-x-0.5'}`} />
-    </button>
-  </div>
-);
-
-const TabBtn = ({ active, onClick, label, count }) => (
-  <button
-    onClick={onClick}
-    className={`flex-1 py-3 text-xs font-semibold uppercase tracking-wider transition-colors ${active ? 'bg-white text-[#B85C38] border-b-2 border-[#B85C38]' : 'text-[#8D857D] hover:text-[#171412]'}`}
-  >
-    {label}{count !== undefined ? ` (${count})` : ''}
-  </button>
-);
-
 
 /**
  * Whose card is this, on this phone? (user, 2026-10-08: scanning a friend's

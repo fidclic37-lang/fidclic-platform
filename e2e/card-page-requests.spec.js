@@ -44,6 +44,8 @@ test('the card page asks each question once', async ({ page }) => {
   const count = (p) => asked.filter((a) => a === p).length;
   expect(count(`GET /api/card/${card}/notification-status`), asked.join('\n')).toBe(1);
   expect(count(`GET /api/card/${card}`), asked.join('\n')).toBe(1);
+  // « Mes dernières activités » (redesign 2026-11-25): asked once too
+  expect(count(`GET /api/card/${card}/activity`), asked.join('\n')).toBe(1);
   const dup = asked.filter((a, i) => asked.indexOf(a) !== i && !a.startsWith('POST'));
   expect(dup, 'no question asked twice').toEqual([]);
 });

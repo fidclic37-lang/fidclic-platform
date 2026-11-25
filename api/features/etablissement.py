@@ -164,7 +164,7 @@ def _view(tid: str, token: TokenData) -> Dict[str, Any]:
     role = getattr(token, "role", None)
     owner = _full(token)
     mine = set(_covers(token, tid))
-    tpl = _db.card_templates.find_one({"tenant_id": tid}, {"_id": 0, "logo_url": 1}) or {}
+    tpl = _db.card_templates.find_one({"tenant_id": tid}, {"_id": 0, "logo_url": 1, "details": 1}) or {}
     lat, lng = _pos(t)
     branches = [b for b in t.get("branches") or [] if b.get("id")]
     if branches:
@@ -203,7 +203,9 @@ def _view(tid: str, token: TokenData) -> Dict[str, Any]:
                      "sector": t.get("sector") or "", "activity": t.get("activity") or "",
                      # « Activité précise » (services/activities, 2026-10-25): FidClic IA's starting rhythm
                      "activity_key": t.get("activity_key") or "",
-                     "description": t.get("description") or "", "website": t.get("website") or ""},
+                     "description": t.get("description") or "", "website": t.get("website") or "",
+                     # the card's networks (« Ma carte en ligne »), the chosen establishment's card
+                     "socials": _socials_view(tpl)},
         # several establishments: the page is the chosen one's (its name, address, phone)
         "store": {"id": sel["id"], "name": sel.get("name") or "", "account_name": t.get("name") or ""} if sel else None,
         "address": addr,
@@ -225,6 +227,21 @@ def get_etablissement(token_data: TokenData = Depends(require_role(READERS, part
 # ---------------------------------------------------------------------------
 # save
 # ---------------------------------------------------------------------------
+def _socials_view(tpl: Dict[str, Any]) -> Dict[str, str]:
+    d = tpl.get("details") if isinstance(tpl.get("details"), dict) else {}
+    from features import card_page as CP
+    return {n: str(d.get(n) or "") for n in CP.NETWORKS}
+
+
+class SocialsIn(BaseModel):
+    """What the owner typed (« @votrecompte » or a link) — kept as typed, the
+    card shows card_page.social_url's https link. "" clears one."""
+    instagram: Optional[str] = Field(None, max_length=300)
+    facebook: Optional[str] = Field(None, max_length=300)
+    tiktok: Optional[str] = Field(None, max_length=300)
+    snapchat: Optional[str] = Field(None, max_length=300)
+
+
 class BusinessIn(BaseModel):
     name: Optional[str] = Field(None, max_length=100)
     logo_url: Optional[str] = None
@@ -233,6 +250,7 @@ class BusinessIn(BaseModel):
     sector: Optional[str] = None
     activity_key: Optional[str] = Field(None, max_length=40)   # "" clears it
     description: Optional[str] = Field(None, max_length=500)
+    socials: Optional[SocialsIn] = None
 
 
 class AddressIn(BaseModel):
@@ -304,6 +322,7 @@ def put_etablissement(body: EtablissementIn,
     owner_names: Dict[str, str] = {}
     sel = _selected(t)
     store_sets: Dict[str, Any] = {}          # the chosen establishment's own fields
+    social_sets: Dict[str, str] = {}         # card_templates.details.<network>, written last
     if body.owner:
         # checked before anything is written: a refused name saves nothing
         owner_names = {"first_name": _clean_name(body.owner.first_name, "prénom"),
@@ -339,6 +358,20 @@ def put_etablissement(body: EtablissementIn,
                 sets["activity_key"] = None
         if b.description is not None:
             sets["description"] = b.description.strip()
+        if b.socials is not None:
+            # checked before anything is written; saved on the card (its « À propos »)
+            from features import card_page as CP
+            soc: Dict[str, str] = {}
+            for n in CP.NETWORKS:
+                v = getattr(b.socials, n)
+                if v is None:
+                    continue
+                v = v.strip()
+                if v and not CP.social_url(n, v):
+                    raise HTTPException(status_code=400, detail=f"Lien {CP.LABELS[n]} invalide : indiquez @votrecompte "
+                                                                f"ou le lien de votre page {CP.LABELS[n]}.")
+                soc[f"details.{n}"] = v
+            social_sets = soc
         if b.logo_url is not None:
             from services import media as _M
             if b.logo_url and not _M.is_image_value(b.logo_url):
@@ -417,6 +450,10 @@ def put_etablissement(body: EtablissementIn,
                           tenant_id=tid, target=me["email"], meta={"by": getattr(token_data, "view_by", None)})
             except Exception:
                 pass
+
+    if social_sets:                          # the card of the establishment in the menu (store_cards)
+        _db.card_templates.update_one({"tenant_id": tid}, {"$set": {"tenant_id": tid, **social_sets,
+                                                                     "updated_at": _now()}}, upsert=True)
 
     if store_sets:
         _db.tenants.update_one({"id": tid, "branches.id": sel["id"]},

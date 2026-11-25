@@ -276,8 +276,14 @@ with mongomock.patch(servers=(("localhost", 27017),)):
           "codeBg: bg," in theme and "codeInk: ink," in theme
           and "codeBg: '#FFFFFF'" not in theme)
 
+    # MyWalletCardPage.jsx's own QR lived in a WalletPass component that was never
+    # rendered; the 2026-11-25 redesign removed that dead code — the page's card
+    # is WalletPassPreview, so the page itself draws no QR (and no plate) any more.
+    page_src = open(os.path.join(root, "pages", "MyWalletCardPage.jsx")).read()
+    check("MyWalletCardPage.jsx: no QR of its own (no white plate possible)",
+          "<QRCodeSVG" not in page_src and 'bgColor="#FFFFFF"' not in page_src)
     for rel in (("components", "WalletCard.jsx"), ("components", "PremiumLoyaltyCard.jsx"),
-                ("components", "AuchanCard.jsx"), ("pages", "MyWalletCardPage.jsx")):
+                ("components", "AuchanCard.jsx")):
         name = rel[-1]
         src = open(os.path.join(root, *rel)).read()
         block = src[max(0, src.index("<QRCodeSVG") - 400): src.index("<QRCodeSVG") + 400]

@@ -42,7 +42,8 @@ test('the card counts exactly the offers its « Mes offres » page lists', async
   await page.goto(`/card/${made.barcode_id}`);
   await expect(offers).toBeVisible();
   await expect(offers, 'a défi is not « en cours » in Mes offres').not.toContainText('en cours');
-  await expect(offers).toContainText('Les offres de la boutique');
+  // the tile (redesign 2026-11-25) shows « N en cours » only when there are offers
+  await expect(offers).toContainText('Mes offres exclusives');
   await offers.click();
   await expect(page.getByText('Pas d’offre en ce moment')).toBeVisible();
 

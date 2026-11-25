@@ -25,6 +25,7 @@ MODULES = [
     "features.automations",               # Automatisations redesign (2026-10-11)
     "features.geo_automation",            # Géolocalisation: Wallet lock screen + card (2026-10-11)
     "features.etablissement",
+    "features.card_page",                 # « Ma carte en ligne »: activity feed (2026-11-25)
     "features.send_rules",
     "features.settings_versions",
     "features.invoices",

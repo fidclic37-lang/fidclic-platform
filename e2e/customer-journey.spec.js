@@ -133,7 +133,10 @@ test.describe.serial('a customer, end to end', () => {
     await w.clean('card from the offers');
     await page.goto(`/card/${me.barcode}?onglet=programme&k=${me.key}`);   // « Programme »
     await expect(page).toHaveURL(new RegExp(`/card/${me.barcode}`));
-    await expect(page.getByRole('dialog', { name: 'Le programme' })).toBeVisible();
+    // « Le programme » is the « Récompenses » tab since the redesign (2026-11-25)
+    await expect(page.getByRole('tab', { name: 'Récompenses' })).toHaveAttribute('aria-selected', 'true');
+    await expect(page.getByRole('tabpanel', { name: 'Récompenses' })).toContainText('Le programme');
+    await page.getByRole('tab', { name: 'Accueil' }).click();                // this customer's card
     await expect(page.locator('body')).toContainText(me.name.split(' ')[0]);
     await w.clean('programme tile');
     await ctx.close();
