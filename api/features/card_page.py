@@ -21,16 +21,32 @@ WHAT THE FEED NEVER SHOWS
     a parrainage not validated yet (referrer_pending).
 
 PAGING
-    Each source reads at most limit+1 rows older than `before`, indexed, with
-    a projection; the merge keeps `limit`. `next` is the last item's `at` when
-    more exist — passed back as `before`. Rows at the very same millisecond as
-    a page's last one could be skipped (never seen in practice: one till).
+    Rows are ordered by (at desc, kind, id) — `id` being the row's Mongo _id,
+    so two rows at the very same millisecond still have one order. `next` is
+    an opaque cursor (« c1. » + base64 of time | kind | id) of the page's last
+    item, passed back as `before`; each source reads at most limit+1 rows
+    after it, indexed, with a projection, and the merge keeps `limit`. A plain
+    ISO date in `before` still works (everything strictly older). A visit
+    whose time was saved as text (old rows) is read by its own small query and
+    paged by the same rule — never dropped.
+
+WHOSE EUROS
+    A shop login that does not cover a visit's establishment sees the visit
+    (kind, time, points, tampons, store name) with `amount: null` (user rule:
+    managers see that a client came, not another store's euros). The owner,
+    an account covering every store, a super admin and the card's own phone
+    see every amount.
 """
 from __future__ import annotations
 
+import base64
+import binascii
 import re
-from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
+from typing import Any, Dict, Iterable, List, Optional
+
+from bson import ObjectId
 from urllib.parse import parse_qs, urlsplit
 
 from fastapi import APIRouter, HTTPException, Query, Request
@@ -41,6 +57,10 @@ _db = None
 DEFAULT_LIMIT, MAX_LIMIT = 20, 100
 MAX_INPUT = 300               # a social value longer than this is not a handle nor a profile link
 MAX_PHOTO_URL = 2048
+CAMPAIGN_PEEK = 5             # the card page's wallet-campaign read: the newest few, never the whole history
+TEXT_DATED_CAP = 500          # old visits whose time is text, read per client (a handful in practice)
+CURSOR_PREFIX = "c1."
+MAX_BEFORE = 160
 FIRST_NAME_MAX = 40
 NETWORKS = ("instagram", "facebook", "tiktok", "snapchat")
 LABELS = {"instagram": "Instagram", "facebook": "Facebook", "tiktok": "TikTok", "snapchat": "Snapchat"}
@@ -52,6 +72,10 @@ def init(db) -> None:
     try:   # the feed's three per-client reads (visits already has tenant+customer+time)
         db.rewards_redeemed.create_index([("tenant_id", 1), ("customer_id", 1), ("redeemed_at", -1)])
         db.referral_redemptions.create_index([("tenant_id", 1), ("referrer_customer_id", 1), ("settled_at", -1)])
+    except Exception:
+        pass
+    try:   # the card page's campaign photo: this client's newest wallet campaigns, a few rows
+        db.campaigns.create_index([("tenant_id", 1), ("recipient_ids", 1), ("sent_at", -1)])
     except Exception:
         pass
 
@@ -214,6 +238,30 @@ def hero_photo_url(card: Any) -> Optional[str]:
     return None
 
 
+def campaign_offer_for_photo(cust: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """What hero_photo_url needs of the Wallet pass's campaign offer
+    (wallet_passes._attach_campaign_offer's choice: the NEWEST wallet campaign
+    this client received, if still live and named), read with one bounded,
+    indexed query — the pass reads every such campaign of the client and
+    renders its text, the page only needs the photo."""
+    from features import campaign_kinds as _K
+    from features import wallet_passes as _WP
+    rows = _db.campaigns.find(
+        {"tenant_id": cust.get("tenant_id"), "status": "sent", "wallet_offer": True, "recipient_ids": cust.get("id")},
+        # the pass's own projection: the same fields decide « live »
+        {"_id": 0, "id": 1, "name": 1, "sent_at": 1, "image_url": 1, "status": 1,
+         "kind": 1, "offer": 1, "event": 1, "defi": 1, "wallet_photo": 1}).sort("sent_at", -1).limit(CAMPAIGN_PEEK)
+    newest, newest_at = None, None
+    for c in rows:
+        at = _WP._parse_dt(c.get("sent_at"))
+        if at and (newest_at is None or at > newest_at):
+            newest, newest_at = c, at
+    if not newest or not _K.is_live(newest, _WP._now()) or not (newest.get("name") or "").strip():
+        return None
+    return {"id": newest.get("id"), "image_url": newest.get("image_url") or None,
+            "wallet_photo": bool(newest.get("wallet_photo"))}
+
+
 def enrich(payload: Dict[str, Any], cust: Dict[str, Any]) -> Dict[str, Any]:
     """The three fields GET /api/card/{bc} adds for the page."""
     if not isinstance(payload, dict):
@@ -224,12 +272,17 @@ def enrich(payload: Dict[str, Any], cust: Dict[str, Any]) -> Dict[str, Any]:
     if isinstance(card, dict):
         card["socials"] = socials(card.get("details"))
         probe = dict(card)
-        if not cust.get("paused_at"):                # a paused card carries no campaign (wallet_passes)
+        # a paused card carries no campaign (wallet_passes); an offer the
+        # payload already carries is reused, else one small read
+        if not cust.get("paused_at") and not isinstance(card.get("campaign_offer"), dict):
             try:
-                from features import wallet_passes as _WP
-                _WP._attach_campaign_offer(probe, cust)
+                offer = campaign_offer_for_photo(cust)
+                if offer:
+                    probe["campaign_offer"] = offer
             except Exception as exc:  # noqa: BLE001 — a missing photo must never cost the card
                 print(f"card page: campaign photo lookup failed (non-fatal): {exc}")
+        elif cust.get("paused_at"):
+            probe.pop("campaign_offer", None)
         try:
             card["hero_photo_url"] = hero_photo_url(probe)
         except Exception as exc:  # noqa: BLE001
@@ -248,7 +301,8 @@ def clamp_limit(n: Optional[int]) -> int:
 
 
 def parse_before(s: Optional[str]) -> Optional[datetime]:
-    """ISO 8601 → aware UTC datetime; ValueError when unreadable."""
+    """ISO 8601 → aware UTC datetime; ValueError when unreadable or outside
+    the dates a datetime can hold once in UTC (0001-01-01+14:00…)."""
     if s is None or not str(s).strip():
         return None
     s = str(s).strip()
@@ -258,12 +312,131 @@ def parse_before(s: Optional[str]) -> Optional[datetime]:
     if s.endswith(("Z", "z")):
         s = s[:-1] + "+00:00"
     d = datetime.fromisoformat(s)
-    return (d if d.tzinfo else d.replace(tzinfo=timezone.utc)).astimezone(timezone.utc)
+    try:
+        return (d if d.tzinfo else d.replace(tzinfo=timezone.utc)).astimezone(timezone.utc)
+    except OverflowError as exc:
+        raise ValueError("date out of range") from exc
+
+
+# ---------------------------------------------------------------------------
+# the paging cursor: (at, kind, tie) — tie = the row's _id, typed
+# ---------------------------------------------------------------------------
+KINDS = ("referral", "reward", "visit")          # the order rows of one instant take
+_KIND_CODE = {"visit": "v", "reward": "r", "referral": "p"}
+_CODE_KIND = {v: k for k, v in _KIND_CODE.items()}
+_EPOCH = datetime(1970, 1, 1, tzinfo=timezone.utc)
+_HEX24 = re.compile(r"[0-9a-f]{24}")
+
+
+@dataclass(frozen=True)
+class Position:
+    """Where a page starts: rows strictly after this one in (at desc, kind, tie).
+    kind None: a plain date — every row strictly older."""
+    at: datetime
+    kind: Optional[str] = None
+    tie: Optional[str] = None
+
+
+def _ms(d: datetime) -> datetime:
+    """Mongo keeps milliseconds: every time is compared at that precision."""
+    return d.replace(microsecond=d.microsecond - d.microsecond % 1000)
+
+
+def tie_of(_id: Any) -> str:
+    """A row's _id as a string that sorts like Mongo sorts _ids (strings before ObjectIds)."""
+    return f"b{_id}" if isinstance(_id, ObjectId) else f"a{_id}"
+
+
+def encode_cursor(at: datetime, kind: str, tie: str) -> str:
+    ms = (at - _EPOCH) // timedelta(milliseconds=1)
+    raw = f"{ms}|{_KIND_CODE[kind]}|{tie}".encode()
+    return CURSOR_PREFIX + base64.urlsafe_b64encode(raw).decode().rstrip("=")
+
+
+def parse_cursor(s: str) -> Position:
+    """« c1.… » → Position; ValueError for anything else."""
+    body = s[len(CURSOR_PREFIX):]
+    if not body or len(s) > MAX_BEFORE or not re.fullmatch(r"[A-Za-z0-9_\-]+", body):
+        raise ValueError("bad cursor")
+    try:
+        raw = base64.urlsafe_b64decode(body + "=" * (-len(body) % 4)).decode("utf-8")
+    except (binascii.Error, UnicodeDecodeError, ValueError) as exc:
+        raise ValueError("bad cursor") from exc
+    parts = raw.split("|", 2)
+    if len(parts) != 3 or not re.fullmatch(r"-?\d{1,15}", parts[0]) or parts[1] not in _CODE_KIND:
+        raise ValueError("bad cursor")
+    tie = parts[2]
+    if not (tie[:1] == "b" and _HEX24.fullmatch(tie[1:])) and not (tie[:1] == "a" and 0 < len(tie) <= 80
+                                                                   and tie.isprintable()):
+        raise ValueError("bad cursor")
+    try:
+        at = _EPOCH + timedelta(milliseconds=int(parts[0]))
+    except OverflowError as exc:
+        raise ValueError("bad cursor") from exc
+    return Position(at=at, kind=_CODE_KIND[parts[1]], tie=tie)
+
+
+def parse_position(s: Optional[str]) -> Optional[Position]:
+    """`before`: the cursor a page gave as `next`, or a plain ISO date."""
+    if s is None or not str(s).strip():
+        return None
+    s = str(s).strip()
+    if s[:1] in ("c", "C"):                        # an ISO date never starts with a letter
+        if not s.startswith(CURSOR_PREFIX):
+            raise ValueError("unknown cursor version")
+        return parse_cursor(s)
+    d = parse_before(s)
+    return Position(at=d) if d else None
+
+
+def _after(pos: Optional[Position], at: datetime, kind: str, tie: str) -> bool:
+    if pos is None:
+        return True
+    if at != pos.at:
+        return at < pos.at
+    return pos.kind is not None and (kind, tie) > (pos.kind, pos.tie)
+
+
+def _tie_gt(tie: str) -> Dict[str, Any]:
+    if tie[:1] == "b":
+        return {"_id": {"$gt": ObjectId(tie[1:])}}
+    # a string _id: the later strings, and every ObjectId (they sort after strings)
+    return {"$or": [{"_id": {"$gt": tie[1:]}}, {"_id": {"$type": "objectId"}}]}
+
+
+def _span(field: str, pos: Optional[Position], kind: str) -> Dict[str, Any]:
+    """The Mongo filter for rows of `kind` after `pos` — date-typed times only."""
+    if pos is None:
+        return {field: {"$type": "date"}}
+    older = {field: {"$lt": pos.at}}
+    if pos.kind is None or kind < pos.kind:
+        return older
+    if kind > pos.kind:
+        return {field: {"$lte": pos.at}}
+    return {"$or": [older, {field: pos.at, **_tie_gt(pos.tie)}]}
+
+
+def _rows(coll, base: Dict[str, Any], field: str, proj: Dict[str, Any], pos: Optional[Position], kind: str,
+          take: int, text_dates: bool = False) -> Iterable[Dict[str, Any]]:
+    """This source's first `take` rows after `pos`, as (doc, at, tie)."""
+    proj = {**proj, "_id": 1, field: 1}
+    for d in coll.find({**base, **_span(field, pos, kind)}, proj).sort([(field, -1), ("_id", 1)]).limit(take):
+        at = _aware(d.get(field))
+        if at is not None:
+            yield d, _ms(at), tie_of(d.get("_id"))
+    if text_dates:   # old rows whose time is text: compared once read, by the same rule
+        for d in coll.find({**base, field: {"$type": "string"}}, proj).limit(TEXT_DATED_CAP):
+            at = _aware(d.get(field))
+            if at is None:
+                continue
+            at, tie = _ms(at), tie_of(d.get("_id"))
+            if _after(pos, at, kind, tie):
+                yield d, at, tie
 
 
 def _aware(v: Any) -> Optional[datetime]:
     if isinstance(v, datetime):
-        return v if v.tzinfo else v.replace(tzinfo=timezone.utc)
+        return (v if v.tzinfo else v.replace(tzinfo=timezone.utc)).astimezone(timezone.utc)
     if isinstance(v, str) and v.strip():
         try:
             return parse_before(v)
@@ -310,13 +483,18 @@ def _n_or_none(v: Any) -> Optional[int]:
     return n if n > 0 else None
 
 
-def activity(cust: Dict[str, Any], limit: int = DEFAULT_LIMIT, before: Optional[datetime] = None) -> Dict[str, Any]:
+def activity(cust: Dict[str, Any], limit: int = DEFAULT_LIMIT, before: Any = None,
+             stores: Optional[Iterable[str]] = None) -> Dict[str, Any]:
+    """The client's feed after `before` (a Position, or a datetime: strictly
+    older). `stores`: the establishments the reader covers, None = all — a
+    visit elsewhere comes with `amount: None`."""
     from features import loyalty_card as _LC
     from features import referrals as _R
     from features import store_cards as _SC
     tid, cid = cust["tenant_id"], cust["id"]
     take = limit + 1
-    span = {"$lt": before} if before else {"$exists": True, "$ne": None}
+    pos = Position(at=before) if isinstance(before, datetime) else before
+    covered = None if stores is None else set(stores)
 
     # the client's card (their home store's): tampons or a balance, its reward
     sid = cust.get("branch_id") or _SC.main_store(tid)
@@ -328,66 +506,68 @@ def activity(cust: Dict[str, Any], limit: int = DEFAULT_LIMIT, before: Optional[
     reward_default = tpl.get("reward_description") or "Une récompense fidélité"
     t = _db.tenants.find_one({"id": tid}, {"_id": 0, "name": 1, "branches": 1}) or {}
     store_of = _store_names(t)
+    main_id = next((b.get("id") for b in t.get("branches") or [] if b.get("is_main")), "main")
 
     items: List[Dict[str, Any]] = []
-    for d in _db.visits.find({"tenant_id": tid, "customer_id": cid, "visit_time": span},
-                             {"_id": 0, "visit_time": 1, "points_awarded": 1, "stamps_awarded": 1, "paper_stamps": 1,
-                              "amount_paid": 1, "branch_id": 1}).sort("visit_time", -1).limit(take):
-        items.append({"kind": "visit", "_at": _aware(d.get("visit_time")),
+    for d, at, tie in _rows(_db.visits, {"tenant_id": tid, "customer_id": cid}, "visit_time",
+                            {"points_awarded": 1, "stamps_awarded": 1, "paper_stamps": 1, "amount_paid": 1,
+                             "branch_id": 1}, pos, "visit", take, text_dates=True):
+        mine = covered is None or (d.get("branch_id") or main_id) in covered
+        items.append({"kind": "visit", "_at": at, "_tie": tie,
                       "points": int(d.get("points_awarded") or 0),
                       "stamps": _visit_stamps(d, per) if stamps_card else None,
-                      "amount": None if d.get("amount_paid") is None else float(d.get("amount_paid") or 0),
+                      "amount": None if not mine or d.get("amount_paid") is None else float(d.get("amount_paid") or 0),
                       "store": store_of(d.get("branch_id"))})
 
-    for d in _db.rewards_redeemed.find({"tenant_id": tid, "customer_id": cid, "redeemed_at": span},
-                                       {"_id": 0, "redeemed_at": 1, "reward_name": 1, "branch_id": 1}
-                                       ).sort("redeemed_at", -1).limit(take):
+    for d, at, tie in _rows(_db.rewards_redeemed, {"tenant_id": tid, "customer_id": cid}, "redeemed_at",
+                            {"reward_name": 1, "branch_id": 1}, pos, "reward", take):
         name = str(d.get("reward_name") or "").strip()
-        items.append({"kind": "reward", "_at": _aware(d.get("redeemed_at")),
+        items.append({"kind": "reward", "_at": at, "_tie": tie,
                       "title": name if name and name != "Reward" else reward_default,
                       "store": store_of(d.get("branch_id"))})
 
-    proj = {"_id": 0, "settled_at": 1, "referrer_customer_id": 1, "referee_customer_id": 1, "referrer_pending": 1,
+    proj = {"referrer_customer_id": 1, "referee_customer_id": 1, "referrer_pending": 1,
             "referrer_points": 1, "referee_points": 1, "referrer_given": 1, "referee_given": 1,
             "referrer_reward_promised": 1, "referee_reward_promised": 1, "rewarded_visits": 1}
     refs = []
-    for side, mine, other in (("referrer", "referrer_customer_id", "referee_customer_id"),
-                              ("referee", "referee_customer_id", "referrer_customer_id")):
-        for d in _db.referral_redemptions.find({"tenant_id": tid, mine: cid, "referrer_pending": False,
-                                                "settled_at": span}, proj).sort("settled_at", -1).limit(take):
-            refs.append((side, d.get(other), d))
+    for side, mine_f, other in (("referrer", "referrer_customer_id", "referee_customer_id"),
+                                ("referee", "referee_customer_id", "referrer_customer_id")):
+        for d, at, tie in _rows(_db.referral_redemptions, {"tenant_id": tid, mine_f: cid, "referrer_pending": False},
+                                "settled_at", proj, pos, "referral", take):
+            refs.append((side, d.get(other), d, at, tie))
     friends = {}
-    ids = list({f for _, f, _ in refs if f})
+    ids = list({f for _, f, _, _, _ in refs if f})
     if ids:   # one read for every friend's name — the first word only leaves this module
         friends = {c["id"]: first_name(c.get("name"))
                    for c in _db.customers.find({"tenant_id": tid, "id": {"$in": ids}}, {"_id": 0, "id": 1, "name": 1})}
-    for side, fid, d in refs:
+    for side, fid, d, at, tie in refs:
         got = _R.given(d, side)
-        items.append({"kind": "referral", "_at": _aware(d.get("settled_at")),
+        items.append({"kind": "referral", "_at": at, "_tie": tie,
                       "role": "parrain" if side == "referrer" else "filleul",
                       "points": _n_or_none(got.get("points")), "stamps": _n_or_none(got.get("stamps")),
                       "offer": (got.get("offer_text") or None) if got.get("offers") else None,
                       "friend": friends.get(fid) or None})
 
-    items = [i for i in items if i["_at"] is not None]
+    # (at desc, kind, tie): Python's sort is stable, also in reverse
+    items.sort(key=lambda i: (i["kind"], i["_tie"]))
     items.sort(key=lambda i: i["_at"], reverse=True)
     more = len(items) > limit
     page = items[:limit]
-    for i in page:
-        i["at"] = iso(i.pop("_at"))
-    # the keys in a stable order: kind, at first
-    page = [{"kind": i["kind"], "at": i["at"], **{k: v for k, v in i.items() if k not in ("kind", "at")}}
-            for i in page]
-    return {"items": page, "next": page[-1]["at"] if more and page else None}
+    last = page[-1] if more and page else None
+    nxt = encode_cursor(last["_at"], last["kind"], last["_tie"]) if last else None
+    # the keys in a stable order: kind, at first; nothing internal leaves
+    page = [{"kind": i["kind"], "at": iso(i["_at"]),
+             **{k: v for k, v in i.items() if k not in ("kind", "_at", "_tie")}} for i in page]
+    return {"items": page, "next": nxt}
 
 
 @router.get("/api/card/{barcode_id}/activity")
 def card_activity(barcode_id: str, request: Request, limit: Optional[int] = Query(None),
-                  before: Optional[str] = Query(None, max_length=64)):
+                  before: Optional[str] = Query(None, max_length=MAX_BEFORE)):
     import server as core
-    cust = core._card_customer(barcode_id, request)
+    cust, _who, stores = core._card_access(barcode_id, request)
     try:
-        b = parse_before(before)
-    except (ValueError, TypeError):
-        raise HTTPException(status_code=422, detail="Date « before » illisible (ISO 8601 attendu).")
-    return activity(cust, clamp_limit(limit), b)
+        b = parse_position(before)
+    except (ValueError, TypeError, OverflowError):
+        raise HTTPException(status_code=422, detail="« before » illisible : le `next` d'une page, ou une date ISO 8601.")
+    return activity(cust, clamp_limit(limit), b, stores=stores)

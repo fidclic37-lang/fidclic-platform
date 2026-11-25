@@ -37,6 +37,20 @@ test('signup, two scans and the owner’s networks show on the new card page', a
     expect(card.customer.first_name).toBe('Réelle');
     expect(card.card.socials.map((s) => s.network)).toEqual(['instagram', 'tiktok']);
 
+    // paging with the server's own opaque cursor, one row a page: each scan exactly once
+    // (the two scans can share a timestamp — the case the cursor exists for)
+    const seen = [];
+    let before = null;
+    for (let i = 0; i < 5; i += 1) {
+      const page1 = await (await request.get(`/api/card/${made.barcode_id}/activity`, {
+        headers: { 'X-Card-Key': made.card_key }, params: { limit: 1, ...(before ? { before } : {}) } })).json();
+      seen.push(...page1.items);
+      before = page1.next;
+      if (!before) break;
+    }
+    expect(seen.map((it) => it.kind)).toEqual(['visit', 'visit']);
+    expect(seen.map((it) => it.amount).sort()).toEqual([12, 8].sort());
+
     await page.goto(`/card/${made.barcode_id}?k=${made.card_key}`);
     await expect(page.getByText('Bonjour, Réelle !')).toBeVisible();
 

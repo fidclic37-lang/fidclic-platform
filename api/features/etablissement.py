@@ -141,6 +141,21 @@ def _covers(token: TokenData, tid: str) -> List[str]:
     return T._covered(me, all_ids) if me else []
 
 
+def _check_store(token: TokenData, tid: str) -> None:
+    """The establishment the menu sends (X-FidClic-Store) must be one this
+    account covers — else 403, before anything is read or written (pentest
+    2026-11-25: an administrateur of LIBERTÉ renamed PALISSY by sending its
+    id). The owner and a super admin cover every store; no header, « all » or
+    an unknown id is no choice (store_cards.store_for → None)."""
+    from features import store_cards as SC
+    sid = SC.store_for(tid)
+    if not sid or getattr(token, "role", None) in ("business_owner", "super_admin"):
+        return
+    if sid not in _covers(token, tid):
+        raise HTTPException(status_code=403,
+                            detail="Accès non autorisé : cet établissement ne fait pas partie des vôtres.")
+
+
 def _store_view(t: Dict[str, Any], b: Dict[str, Any], editable: bool) -> Dict[str, Any]:
     lat, lng = _pos(b)
     return {"id": b.get("id"), "name": b.get("name") or t.get("name") or "Établissement",
@@ -221,6 +236,7 @@ def _view(tid: str, token: TokenData) -> Dict[str, Any]:
 
 @router.get("/api/owner/etablissement")
 def get_etablissement(token_data: TokenData = Depends(require_role(READERS, partial_ok=True))):
+    _check_store(token_data, token_data.tenant_id)
     return _view(token_data.tenant_id, token_data)
 
 
@@ -314,6 +330,7 @@ def put_etablissement(body: EtablissementIn,
     owner = _full(token_data)
     if getattr(token_data, "role", None) not in EDITORS and not owner:
         raise HTTPException(status_code=403, detail="Accès non autorisé : vous ne pouvez pas modifier « Paramètres ».")
+    _check_store(token_data, tid)
     if body.owner and getattr(token_data, "role", None) != "business_owner":
         raise HTTPException(status_code=403, detail="Seul le propriétaire modifie son propre nom.")
     if not owner and (body.business or body.address or body.geo):

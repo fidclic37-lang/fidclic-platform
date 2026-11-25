@@ -203,6 +203,86 @@ def main():
     check("a string date (old rows) → parsed", CP.iso("2026-03-29T01:30:00+00:00") == "2026-03-29T01:30:00Z")
     check("garbage → None", CP.iso("x") is None and CP.iso(None) is None)
 
+    print("parse_before: out of range (pentest 2026-11-25)")
+    for bad in ("0001-01-01T00:00:00+14:00", "9999-12-31T23:59:59-14:00", "0001-01-01T00:00:00+00:01"):
+        try:
+            pb(bad)
+            check(f"{bad} → ValueError, never OverflowError", False)
+        except ValueError:
+            check(f"{bad} → ValueError, never OverflowError", True)
+        except OverflowError:
+            check(f"{bad} → ValueError, never OverflowError", False)
+    check("the edges in UTC still read", pb("0001-01-01T00:00:00Z").year == 1 and pb("9999-12-31T23:59:59Z").year == 9999)
+
+    print("paging cursor")
+    from bson import ObjectId
+    oid = ObjectId("65a1b2c3d4e5f6a7b8c9d0e1")
+    at = datetime(2026, 10, 25, 1, 30, 0, 123000, tzinfo=timezone.utc)
+    cur = CP.encode_cursor(at, "visit", CP.tie_of(oid))
+    check(f"opaque, versioned, url-safe ({cur})", cur.startswith("c1.") and all(c.isalnum() or c in "._-" for c in cur))
+    pos = CP.parse_cursor(cur)
+    check("round trip: time, kind, id", pos == CP.Position(at=at, kind="visit", tie="b" + str(oid)))
+    check("fits the query limit", len(CP.encode_cursor(datetime(9999, 12, 31, tzinfo=timezone.utc), "referral",
+                                                       CP.tie_of("x" * 79))) <= CP.MAX_BEFORE)
+    check("microseconds fall to the millisecond (Mongo's precision)",
+          CP.parse_cursor(CP.encode_cursor(at.replace(microsecond=123999), "reward", "a1")).at == at)
+    check("string ids sort before ObjectIds, as in Mongo", CP.tie_of("zzz") < CP.tie_of(oid))
+    check("ObjectIds sort by their bytes", CP.tie_of(ObjectId("0" * 24)) < CP.tie_of(oid))
+    for bad in ("c1.", "c1.@@", "c1.Zm9v", "c2.abc", "c1." + "A" * 300, CP.CURSOR_PREFIX + "MXx2fGJ6eg",
+                CP.CURSOR_PREFIX + "OTk5OTk5OTk5OTk5OTk5fHZ8YjY1YTFiMmMzZDRlNWY2YTdiOGM5ZDBlMQ"):
+        try:
+            CP.parse_position(bad)
+            check(f"{bad[:16]!r} → ValueError", False)
+        except ValueError:
+            check(f"{bad[:16]!r} → ValueError", True)
+    pp = CP.parse_position
+    check("a plain ISO date → a Position without kind", pp("2026-11-25T10:00:00Z") ==
+          CP.Position(at=datetime(2026, 11, 25, 10, tzinfo=timezone.utc)))
+    check("empty → None", pp("") is None and pp(None) is None)
+    check("a cursor → its Position", pp(cur) == pos)
+    a = CP._after
+    P = CP.Position(at=at, kind="reward", tie="b" + "5" * 24)
+    check("older rows are after", a(P, at - timedelta(milliseconds=1), "visit", "b" + "0" * 24))
+    check("newer rows are not", not a(P, at + timedelta(milliseconds=1), "referral", "b" + "9" * 24))
+    check("same instant: a later kind is after, an earlier one is not",
+          a(P, at, "visit", "b" + "0" * 24) and not a(P, at, "referral", "b" + "9" * 24))
+    check("same instant and kind: a larger id is after, the same one is not",
+          a(P, at, "reward", "b" + "6" * 24) and not a(P, at, "reward", "b" + "5" * 24))
+    check("a plain date: only strictly older", a(CP.Position(at=at), at - timedelta(milliseconds=1), "visit", "a")
+          and not a(CP.Position(at=at), at, "visit", "bz"))
+    check("no position: everything", a(None, at, "visit", "a"))
+
+    print("card_probe (failed card lookups per IP)")
+    from services import card_probe as PR
+    pdb = mongomock.MongoClient().probe_db
+    check("an unknown IP is not blocked", not PR.blocked(pdb, "192.0.2.1"))
+    check("no IP is never blocked nor counted", not PR.blocked(pdb, "") and PR.fail(pdb, "") is None
+          and pdb[PR.COLLECTION].count_documents({}) == 0)
+    for _ in range(PR.LIMIT - 1):
+        PR.fail(pdb, "192.0.2.1")
+    check(f"{PR.LIMIT - 1} failures: not yet", not PR.blocked(pdb, "192.0.2.1"))
+    PR.fail(pdb, "192.0.2.1")
+    check(f"{PR.LIMIT} failures: blocked", PR.blocked(pdb, "192.0.2.1"))
+    PR.fail(pdb, "192.0.2.1")
+    check("once blocked, nothing more is stored", pdb[PR.COLLECTION].count_documents({"ip": "192.0.2.1"}) == PR.LIMIT)
+    check("another IP is untouched", not PR.blocked(pdb, "192.0.2.2"))
+    long_ip = "1" * 200
+    for _ in range(PR.LIMIT):
+        PR.fail(pdb, long_ip)
+    check("a 200-char « IP » is counted under one key", PR.blocked(pdb, long_ip))
+    real = PR._now
+    try:
+        PR._now = lambda: real() + PR.WINDOW + timedelta(seconds=1)
+        check("after the window: free again", not PR.blocked(pdb, "192.0.2.1"))
+    finally:
+        PR._now = real
+
+    class Broken:
+        def __getitem__(self, k):
+            raise RuntimeError("db down")
+    check("a database outage blocks nobody and raises nothing",
+          PR.blocked(Broken(), "192.0.2.9") is False and PR.fail(Broken(), "192.0.2.9") is None)
+
     print(f"\n{passed} passed, {failed} failed")
     sys.exit(1 if failed else 0)
 

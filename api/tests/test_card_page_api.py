@@ -179,8 +179,10 @@ def main():
 
     print("3. Paging")
     p1 = act(limit=3).json()
-    check(f"limit=3 → 3 items, next = the 3rd's at ({p1['next']})",
-          len(p1["items"]) == 3 and p1["next"] == p1["items"][-1]["at"])
+    check(f"limit=3 → 3 items, next = an opaque cursor after the 3rd ({p1['next']})",
+          len(p1["items"]) == 3 and isinstance(p1["next"], str) and p1["next"].startswith("c1."))
+    old_style = act(limit=3, before=p1["items"][-1]["at"]).json()
+    check("the 3rd's at as a plain ISO before still pages (back-compat)", old_style["items"] == items[3:6])
     p2 = act(limit=3, before=p1["next"]).json()
     p3 = act(limit=3, before=p2["next"]).json()
     joined = p1["items"] + p2["items"] + p3["items"]
