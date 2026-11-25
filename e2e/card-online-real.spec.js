@@ -27,8 +27,13 @@ test('signup, two scans and the owner’s networks show on the new card page', a
     expect(r.ok(), await r.text()).toBeTruthy();
   }
 
+  // networks are kept per établissement: save them on the card's own store, named
+  // explicitly — the owner's « current store » is whatever an earlier spec left
+  const card0 = await (await request.get(`/api/card/${made.barcode_id}`, { headers: { 'X-Card-Key': made.card_key } })).json();
+  const HS = { ...H, ...(card0.store_id ? { 'X-FidClic-Store': card0.store_id } : {}) };
+
   // the owner types a handle and a full link; the server keeps only safe https links
-  const save = await request.put('/api/owner/etablissement', { headers: H,
+  const save = await request.put('/api/owner/etablissement', { headers: HS,
     data: { business: { socials: { instagram: '@cafelumiere', tiktok: 'https://www.tiktok.com/@cafelumiere', facebook: '', snapchat: '' } } } });
   expect(save.ok(), await save.text()).toBeTruthy();
 
@@ -68,7 +73,7 @@ test('signup, two scans and the owner’s networks show on the new card page', a
     expect(wide).toBeLessThanOrEqual(0);
   } finally {
     // the demo store is shared by the other specs
-    await request.put('/api/owner/etablissement', { headers: H,
+    await request.put('/api/owner/etablissement', { headers: HS,
       data: { business: { socials: { instagram: '', tiktok: '', facebook: '', snapchat: '' } } } });
   }
 });
