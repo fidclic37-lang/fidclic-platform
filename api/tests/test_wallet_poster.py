@@ -253,7 +253,9 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     check(f"redirects to the merchant's booking page ({r.status_code})",
           r.status_code == 302 and r.headers["location"] == "https://planity.com/royal-trim")
     r = http("GET", "/api/card/FT-TEST0001/action/fa1-viewOffersRewards", follow_redirects=False)
-    check("« Voir les offres » opens the offers page", r.status_code == 302 and r.headers["location"].endswith("/card/FT-TEST0001/offres"))
+    # user, 2026-11-25: « Voir les offres et récompenses » opens « Ma carte en ligne » itself
+    check("« Voir les offres » opens the card page, not /offres",
+          r.status_code == 302 and r.headers["location"] == f"{WP._site_url()}/card/FT-TEST0001")
     check("each tap is counted", db.pass_action_clicks.count_documents({"tenant_id": "t1"}) == 2)
     r = http("GET", "/api/card/FT-TEST0001/action/fa9-order", follow_redirects=False)
     check("a tile the merchant removed lands on the card, uncounted",
@@ -263,6 +265,12 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     check("Wallet stats show the tiles and their taps",
           st["featured_actions"]["clicks_30d"] == {"viewOffersRewards": 1, "bookAppointment": 1}
           and [a["type"] for a in st["featured_actions"]["active"]] == ["viewOffersRewards", "bookAppointment"])
+    r = http("GET", fa[0]["url"].split(WP._site_url())[-1], follow_redirects=False)
+    key = fa[0]["url"].split("k=")[-1]
+    check("…tapped from the pass (owner key) it opens the owner's card page",
+          r.status_code == 302 and r.headers["location"] == f"{WP._site_url()}/card/FT-TEST0001?k={key}")
+    r = http("GET", "/api/card/FT-TEST0001/action/fa1-viewOffersRewards?k=wrong", follow_redirects=False)
+    check("…a wrong key gives no key away", r.status_code == 302 and r.headers["location"] == f"{WP._site_url()}/card/FT-TEST0001")
 
     # « Couleur du nom » = Automatique (user, 2026-10-13: the name was missing
     # on the iOS 27 poster and appeared as soon as a colour was picked by hand).

@@ -7448,6 +7448,13 @@ def _as_aware(v) -> Optional[datetime]:
     return v if v.tzinfo else v.replace(tzinfo=timezone.utc)
 
 
+# What a campaign shown on the card needs (offers, « Vos offres », notifications):
+# its text, photo, link, kind and dates — campaign_kinds.window / is_live / labels.
+CARD_CAMPAIGN_FIELDS = {"_id": 0, "id": 1, "name": 1, "content": 1, "image_url": 1, "link_url": 1, "link": 1,
+                        "sent_at": 1, "status": 1, "kind": 1, "details": 1, "offer": 1, "event": 1, "defi": 1,
+                        "visible_until": 1}
+
+
 def _derive_offers_for_tenant(tenant_id: str, customer_id: Optional[str] = None) -> List[dict]:
     """Offers = active card-template offer + campaigns still valid.
 
@@ -7489,7 +7496,10 @@ def _derive_offers_for_tenant(tenant_id: str, customer_id: Optional[str] = None)
     query = {"tenant_id": tenant_id, "status": "sent", "sent_at": {"$gte": cutoff}}
     if customer_id:
         query["recipient_ids"] = customer_id
-    camps = list(db.campaigns.find(query).sort("sent_at", -1).limit(60 if customer_id else 5))
+    # the fields the card shows, never recipient_ids (one shop-wide send = every
+    # client's id: 60 of them made ~20 MB per card open, load review 2026-11-25);
+    # served by the tenant + recipient + sent_at index (features/card_page)
+    camps = list(db.campaigns.find(query, CARD_CAMPAIGN_FIELDS).sort("sent_at", -1).limit(60 if customer_id else 5))
     if customer_id:
         # live on the card, défis apart (they have their own « Défi en cours »)
         camps = [c for c in camps if c.get("kind") != "defi" and _K.is_live(c, now_utc)][:10]
@@ -7912,7 +7922,7 @@ def _recent_push_notifications_for(customer_id: str, tenant_id: str) -> List[dic
     cutoff = datetime.now(timezone.utc) - timedelta(days=45)
     items = []
     for c in db.campaigns.find({"tenant_id": tenant_id, "status": "sent", "sent_at": {"$gte": cutoff},
-                                "recipient_ids": customer_id}).sort("sent_at", -1).limit(6):
+                                "recipient_ids": customer_id}, CARD_CAMPAIGN_FIELDS).sort("sent_at", -1).limit(6):
         items.append({
             "id": c.get("id"),
             "title": c.get("name"),

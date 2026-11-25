@@ -118,6 +118,14 @@ def main():
     act = {"type": "membershipBenefits"}
     check("a Wallet tile tapped with the key keeps it", f"k={k(ME)}" in W.featured_target(act, ME, {}, True))
     check("…and without it gives none away", "k=" not in W.featured_target(act, ME, {}, False))
+    offers = {"type": "viewOffersRewards", "url": ""}
+    check("« Voir les offres » tapped with the key → the owner's card page",
+          W.featured_target(offers, ME, {}, True) == f"{W._site_url()}/card/{ME}?k={k(ME)}")
+    check("…without it → the bare card page", W.featured_target(offers, ME, {}, False) == f"{W._site_url()}/card/{ME}")
+    check("…the owner's own link still wins",
+          W.featured_target({"type": "viewOffersRewards", "url": "https://shop.fr/o"}, ME, {}, True) == "https://shop.fr/o")
+    check("« Avantages membres » still opens the programme view",
+          W.featured_target(act, ME, {}, True) == f"{W._site_url()}/card/{ME}?onglet=programme&k={k(ME)}")
 
     print(f"\n{passed} passed, {failed} failed")
     sys.exit(1 if failed else 0)

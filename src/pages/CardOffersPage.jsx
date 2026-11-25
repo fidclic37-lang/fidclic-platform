@@ -7,8 +7,9 @@ import { cycleVisits, rewardsPending } from '../lib/cardCycle';
 import { liveOffers } from '../lib/cardOffers';
 
 /**
- * « Vos offres » — where « Voir les offres et récompenses » under the Wallet
- * pass lands (iOS 27 featured action). Redesigned 2026-10-09 from the user's
+ * « Vos offres » — where the bottom « Récompenses » of « Ma carte en ligne »
+ * lands (user, 2026-11-25; until then the Wallet tile « Voir les offres et
+ * récompenses » came here — it now opens the card page itself). Redesigned 2026-10-09 from the user's
  * mockup: the shop's logo and « Vos offres, <prénom> », the reward card with
  * its meter, then the offers running for THIS customer, each with its photo
  * (or a picture of the shop's trade), what it gives and until when.

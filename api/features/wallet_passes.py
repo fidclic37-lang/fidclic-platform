@@ -1242,8 +1242,8 @@ def featured_target(action: Dict[str, str], serial: str, tenant: Dict[str, Any],
     owner key, so the card links carry it on (services/card_owner)."""
     kind = FEATURED_TYPES.get(action.get("type") or "", ("", ""))[1]
     card_url = f"{_site_url()}/card/{serial}"
-    if kind == "offers":                        # user, 2026-10-07: offers only, not the whole card
-        return action.get("url") or (CO.owner_url(_site_url(), serial, "/offres") if owner else f"{card_url}/offres")
+    if kind == "offers":                        # user, 2026-11-25: « Ma carte en ligne » itself (was /offres)
+        return action.get("url") or (CO.owner_url(_site_url(), serial) if owner else card_url)
     if kind == "program":
         return action.get("url") or (CO.owner_url(_site_url(), serial, query={"onglet": "programme"}) if owner
                                      else f"{card_url}?onglet=programme")
@@ -4027,6 +4027,7 @@ def _after_register(device_id: str, serial: str, token: str, cust: Dict[str, Any
             _reg_event(serial, "renewed", device_id, tenant_id=tid)
     except Exception as exc:                     # noqa: BLE001
         print(f"wallet: registration event not kept ({exc})")
+    welcomed = False
     if not existing:
         try:                                     # the pass is in an Apple Wallet (again): Clients › Carte reads « Active »
             _db.customers.update_one({"barcode_id": serial}, {"$set": {"wallet_added_at": datetime.now(timezone.utc)}})
@@ -4036,12 +4037,13 @@ def _after_register(device_id: str, serial: str, token: str, cust: Dict[str, Any
             if LANE:                             # the lane never loads the server: handed over
                 queue_welcome(serial, tid)
             else:
-                _send_welcome(serial)
+                welcomed = _send_welcome(serial, pushed_only=True)
         except Exception as exc:
             print(f"wallet: welcome not sent (non-fatal): {exc}")
     # scanned before this iPhone registered: the scan had no device to push
+    # (the Bienvenue just pushed the card: the iPhone fetches it all at once)
     try:
-        if (not existing or existing.get("push_token") != token) and changed_since_pass(cust):
+        if not welcomed and (not existing or existing.get("push_token") != token) and changed_since_pass(cust):
             _catch_up(device_id, serial, token, tid)
     except Exception as exc:                     # noqa: BLE001
         print(f"wallet: catch-up push not sent ({exc})")
@@ -4055,13 +4057,22 @@ WELCOME_PING_TIMEOUT_S = 3.0
 WELCOME_BATCH = 50
 
 
-def _send_welcome(serial: str) -> bool:
+def _send_welcome(serial: str, pushed_only: bool = False) -> bool:
+    """The Bienvenue for a card just added. True: handled (the lane's queue);
+    with pushed_only, True only when the card was pushed just now."""
     from features import automations as AU
     full = _db.customers.find_one({"barcode_id": serial}, {"_id": 0})
     if not full:
         return False
-    AU.wallet_added(full.get("tenant_id"), full, "apple")
-    return True
+    out = AU.wallet_added(full.get("tenant_id"), full, "apple")
+    if not pushed_only:
+        return True
+    if AU.pushed_now(out):
+        return True
+    if full.get("card_added_note_at"):
+        return False                               # said before: nothing pushed now
+    now_row = _db.customers.find_one({"barcode_id": serial}, {"_id": 0, "card_added_note_at": 1}) or {}
+    return bool(now_row.get("card_added_note_at"))
 
 
 def queue_welcome(serial: str, tenant_id: Optional[str]) -> None:

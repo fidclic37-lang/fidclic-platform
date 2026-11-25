@@ -159,6 +159,25 @@ export function searchForTab(search, tab) {
   return s ? `?${s}` : '';
 }
 
+/**
+ * The bottom « Récompenses » is a link (user, 2026-11-25): « Vos offres » of
+ * this card, /card/{bc}/offres — the shop's view (?vue=commerce) kept, never
+ * the owner key or any one-shot param. null without a card id.
+ */
+export function rewardsHref(barcodeId, search) {
+  const bc = typeof barcodeId === 'string' ? barcodeId.trim() : '';
+  if (!bc) return null;
+  const q = new URLSearchParams(typeof search === 'string' ? search : '');
+  return `/card/${encodeURIComponent(bc)}/offres${q.get('vue') === 'commerce' ? '?vue=commerce' : ''}`;
+}
+
+const IN_PAGE_TABS = ['accueil', 'carte', 'compte'];
+
+/** The bottom item lit for `tab` — none on the hidden views (programme, historique). */
+export function navActive(tab) {
+  return IN_PAGE_TABS.includes(tab) ? tab : null;
+}
+
 // ---------------------------------------------------------------- networks
 
 const NETWORKS = {

@@ -3,7 +3,7 @@ import api from '../lib/api';
 import { keyOf } from '../lib/myCards';
 import { phoneWallet as _phoneWallet, phoneWallets, walletOrder } from '../lib/phoneWallet';
 import { here as walletPlace, safariLink } from '../lib/iosSafari';
-import { APPLE_WALLET_APP, waitForAppleAdd } from '../lib/walletOpen';
+import { addPageHref, passHref, waitForAppleAdd } from '../lib/walletOpen';
 
 /**
  * WalletButtons — "Ajouter à Apple Wallet" / "Ajouter à Google Wallet" on the
@@ -13,8 +13,10 @@ import { APPLE_WALLET_APP, waitForAppleAdd } from '../lib/walletOpen';
  *   Apple  → a direct link to /api/card/<id>/apple-wallet.pkpass. Safari on
  *            iOS opens the signed pass in Wallet's "Add" sheet. iOS then comes
  *            back to Safari: once the iPhone has told the server the card is
- *            in its Wallet, the page opens the Wallet app (lib/walletOpen,
- *            user 2026-11-25) and offers « Ouvrir Apple Wallet ».
+ *            in its Wallet, the page says « Carte ajoutée » and points to the
+ *            card's « Bienvenue » notification, which opens that very card
+ *            (lib/walletOpen, user 2026-11-25). Elsewhere on an iPhone (Chrome,
+ *            an app): Safari opens /card/<id>/ajouter, which shows the sheet.
  *   Google → GET /api/card/<id>/google-wallet returns the signed
  *            "Save to Google Wallet" URL (loyalty object created on demand);
  *            once ready, the button is that link itself, so Android hands it
@@ -50,17 +52,24 @@ export default function WalletButtons({ barcodeId, onError, phoneOnly = false, o
   const [appleAdded, setAppleAdded] = useState(false);
   const waiting = useRef(false);
   const gone = useRef(false);
-  useEffect(() => () => { gone.current = true; }, []);
+  // the card's key as the page opened: the links keep it even if the phone's
+  // memory loses it before the tap (Soan, 2026-11-25: five « Ajouter » → 403)
+  const keyAtOpen = useRef(keyOf(barcodeId));
+  useEffect(() => { gone.current = false; return () => { gone.current = true; }; }, []);   // mounted again: alive again
+  // only read while rendering (a render may be thrown away and redone);
+  // ?wallet= leaves the address bar after it
   const [pointed] = useState(() => {
+    try { return new URLSearchParams(window.location.search).get('wallet') === 'apple'; } catch (_e) { return false; }
+  });
+  useEffect(() => {
+    if (!pointed) return;
     try {
       const q = new URLSearchParams(window.location.search);
-      if (q.get('wallet') !== 'apple') return false;
       q.delete('wallet');
       const rest = q.toString();
       window.history.replaceState(window.history.state, '', `${window.location.pathname}${rest ? `?${rest}` : ''}${window.location.hash}`);
-      return true;
-    } catch (_e) { return false; }
-  });
+    } catch (_e) { /* stays in the bar: harmless */ }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     // The card's business plan decides too (Super admin › Plan Limits › Wallet).
@@ -97,14 +106,14 @@ export default function WalletButtons({ barcodeId, onError, phoneOnly = false, o
   if (!cfg.apple && !cfg.google && !cfg.samsung) return null;
 
   const isApple = /iPad|iPhone|iPod|Macintosh/.test(navigator.userAgent);
-  const key = keyOf(barcodeId);
+  const key = keyOf(barcodeId) || keyAtOpen.current;
   const place = walletPlace();
-  // this card's page, in Safari, ready to add (its key goes along: Safari does
-  // not share this app's memory)
-  const cardInSafari = `${window.location.origin}/card/${barcodeId}?${new URLSearchParams({ ...(key ? { k: key } : {}), wallet: 'apple' })}`;
-  const appleHref = place === 'other'
-    ? safariLink(cardInSafari)
-    : `/api/card/${barcodeId}/apple-wallet.pkpass${key ? `?k=${encodeURIComponent(key)}` : ''}`;
+  // outside Safari: the add page, in Safari — it shows the Wallet sheet by
+  // itself (user, 2026-11-25: no card page, no second tap). Its key goes
+  // along: Safari does not share this app's memory. No key: the card page.
+  const cardInSafari = addPageHref(window.location.origin, barcodeId, key)
+    || `${window.location.origin}/card/${barcodeId}?${new URLSearchParams({ wallet: 'apple' })}`;
+  const appleHref = place === 'other' ? safariLink(cardInSafari) : passHref(barcodeId, key);
   const onApple = () => {
     if (place === 'safari') { waitForWallet(); return; }
     if (place !== 'other') return;
@@ -117,14 +126,14 @@ export default function WalletButtons({ barcodeId, onError, phoneOnly = false, o
     if (waiting.current || appleAdded) return;
     waiting.current = true;
     waitForAppleAdd({
-      ask: () => api.get(`/card/${barcodeId}/apple-wallet/added`).then((r) => r.data?.added === true),
+      ask: () => api.get(`/card/${barcodeId}/apple-wallet/added`, { params: key ? { k: key } : undefined })
+        .then((r) => r.data?.added === true),
       hidden: () => document.hidden,
       cancelled: () => gone.current,
     }).then((added) => {
       waiting.current = false;
       if (!added || gone.current) return;
       setAppleAdded(true);
-      try { window.location.href = APPLE_WALLET_APP; } catch (_e) { /* the button below stays */ }
     });
   };
   const copyLink = async () => {
@@ -168,7 +177,7 @@ export default function WalletButtons({ barcodeId, onError, phoneOnly = false, o
     <div className="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-2">
       {order.map((k) => {
         if (!wanted.includes(k)) return null;
-        if (k === 'apple' && cfg.apple && !appleAdded) {        // added: « Ouvrir Apple Wallet » instead
+        if (k === 'apple' && cfg.apple && !appleAdded) {        // added: « Carte ajoutée » instead
           return (
             <a key="apple" href={appleHref} onClick={onApple}
                className={`${pill} bg-black text-white ${pointed ? 'ring-4 ring-[#3B82F6]/40' : ''}`} style={{ order: isApple ? 0 : 1 }}>
@@ -215,8 +224,8 @@ export default function WalletButtons({ barcodeId, onError, phoneOnly = false, o
       })}
       {appleAdded && (
         <div data-testid="apple-wallet-added" role="status" className="order-first space-y-2 sm:col-span-2">
-          <p className="text-center text-[14px] font-semibold text-[#15803D]">✓ Carte ajoutée à Apple Wallet</p>
-          <a href={APPLE_WALLET_APP} className={`${pill} bg-[#15803D] text-white`}>Ouvrir Apple Wallet</a>
+          <p className="text-center text-[15px] font-semibold text-[#15803D]">✓ Carte ajoutée à Apple Wallet</p>
+          <p className="text-center text-[13.5px] leading-snug text-[#334155]">{ADDED_HINT}</p>
         </div>
       )}
       {pointed && cfg.apple && place === 'safari' && (
@@ -242,6 +251,10 @@ export default function WalletButtons({ barcodeId, onError, phoneOnly = false, o
     </div>
   );
 }
+
+// No web page may open Wallet at one card; the card's own « Bienvenue »
+// banner does (features/automations.card_added_note, user 2026-11-25).
+export const ADDED_HINT = 'Une notification « Bienvenue » arrive sur votre iPhone : touchez-la pour ouvrir votre carte.';
 
 function GoogleGlyph({ w, h }) {
   return (

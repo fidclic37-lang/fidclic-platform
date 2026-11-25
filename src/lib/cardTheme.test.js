@@ -156,3 +156,90 @@ test('themeVars turns tokens into CSS custom properties', () => {
   }
   assert.equal(v['--neutral'], undefined, 'no flags leak into CSS');
 });
+
+// ---------------------------------------------------------------- the photo's colours
+// user, 2026-11-25: Royal Trim's cards are black / white / grey in Pass Designer,
+// their look is the photo (Liberté black + gold, Palissy graphite + bronze,
+// PL-Monstre olive + gold) — lib/photoPalette reads it, themeFromCard(card, photo) uses it.
+const GOLD = { accent: '#c9a04a', dark: '#0f0d0b' };
+const OLIVE = { accent: '#6a7040', dark: '#15170e' };
+const BRONZE = { accent: '#97693f', dark: '#26272a' };
+
+test('black card + gold photo comes out exactly like the approved black + gold card', () => {
+  const t = themeFromCard({ card_bg_color: '#15120E' }, GOLD);
+  assertReadable(t, 'black card, gold photo');
+  assert.deepEqual(t, themeFromCard({ card_bg_color: '#15120E', accent_color: '#C9A04A' }));
+  assert.ok(hueNear(hsl(t.page).h, 40, 15) && hsl(t.page).s > 0.1, `warm light page (${t.page})`);
+  assert.ok(hsl(t.btn).l < 0.15, `dark button (${t.btn})`);
+  assert.ok(hueNear(hsl(t.btnInk).h, 42, 14) && hsl(t.btnInk).s > 0.3, `gold ink on it (${t.btnInk})`);
+  assert.match(t.bar, /linear-gradient/);
+  assert.ok(t.bar.includes(t.accentInk), `gold bar (${t.bar})`);
+  assert.equal(t.neutral, false);
+});
+
+test('no colour at all + a gold photo: gold accent, dark from the photo', () => {
+  const t = themeFromCard({}, GOLD);
+  assertReadable(t, 'no colour, gold photo');
+  assert.equal(t.neutral, false);
+  assert.ok(hueNear(hsl(t.page).h, 40, 15), `warm page (${t.page})`);
+  assert.ok(hueNear(hsl(t.btnInk).h, 42, 14) && hsl(t.btnInk).s > 0.3, `gold button ink (${t.btnInk})`);
+  assert.ok(hsl(t.btn).l < 0.15, `dark button (${t.btn})`);
+  assert.ok(hsl(t.heroFade).l < 0.1, `the photo's dark under it (${t.heroFade})`);
+});
+
+test('graphite card + bronze photo, black card + olive photo: their own hues', () => {
+  const g = themeFromCard({ brand_color: '#1E1F22', accent_color: '#9a9a9a' }, BRONZE);
+  assertReadable(g, 'graphite, bronze photo');
+  assert.ok(hueNear(hsl(g.page).h, 29, 15), `bronze page (${g.page})`);
+  assert.ok(hueNear(hsl(g.btnInk).h, 29, 15), `bronze button ink (${g.btnInk})`);
+  const o = themeFromCard({ card_bg_color: '#000000', logo_text_color: '#FFFFFF' }, OLIVE);
+  assertReadable(o, 'black, olive photo');
+  assert.ok(hueNear(hsl(o.page).h, 67, 15) && hsl(o.page).s > 0.1, `olive page (${o.page})`);
+  assert.ok(hueNear(hsl(o.brandInk).h, 67, 15), `olive numbers (${o.brandInk})`);
+});
+
+test('white / grey cards take the photo too, and its dark under the photo', () => {
+  const w = themeFromCard({ brand_color: '#FFFFFF', surface: 'blanc' }, GOLD);
+  assertReadable(w, 'white card, gold photo');
+  assert.ok(hueNear(hsl(w.page).h, 40, 15), `warm page (${w.page})`);
+  assert.ok(hueNear(hsl(w.heroFade).h, hsl(GOLD.dark).h, 20) && hsl(w.heroFade).l < 0.12, `photo's dark fade (${w.heroFade})`);
+  const g = themeFromCard({ brand_color: '#8A8A8A' }, OLIVE);
+  assertReadable(g, 'grey card, olive photo');
+  assert.ok(hueNear(hsl(g.page).h, 67, 15), `olive page (${g.page})`);
+});
+
+test('a chromatic card ignores the photo', () => {
+  const card = { brand_color: '#1450B8', accent_color: '#F8B008' };
+  assert.deepEqual(themeFromCard(card, GOLD), themeFromCard(card));
+  const accentOnly = { card_bg_color: '#15120E', poster_footer_color: '#B03A2E' };   // a red the owner set
+  assert.deepEqual(themeFromCard(accentOnly, OLIVE), themeFromCard(accentOnly));
+  const olive = { brand_color: '#6E7442' };
+  assert.deepEqual(themeFromCard(olive, GOLD), themeFromCard(olive));
+});
+
+test('no photo, a grey photo, or garbage → today\'s theme', () => {
+  const black = { card_bg_color: '#15120E' };
+  for (const p of [undefined, null, {}, { accent: null, dark: null }, { accent: '#808080' }, { accent: 'nope', dark: 42 }, 'gold', 7]) {
+    assert.deepEqual(themeFromCard(black, p), themeFromCard(black), `photo ${JSON.stringify(p)}`);
+    assert.deepEqual(themeFromCard({}, p), themeFromCard(), `no colour, photo ${JSON.stringify(p)}`);
+  }
+  assert.equal(themeFromCard({}, { accent: null, dark: null }).neutral, true);
+});
+
+test('only the photo\'s dark: neutral colours, the photo\'s dark under it', () => {
+  const t = themeFromCard({}, { accent: null, dark: '#1b140c' });
+  assertReadable(t, 'photo dark only');
+  assert.equal(t.neutral, true);
+  assert.equal(t.page, themeFromCard().page);
+  assert.ok(hueNear(hsl(t.heroFade).h, 33, 15), `warm fade (${t.heroFade})`);
+  // the card's own dark colour still wins over the photo's
+  const c = themeFromCard({ card_bg_color: '#101B2E' }, { accent: '#c9a04a', dark: '#2a1a0a' });
+  assert.ok(hueNear(hsl(c.heroFade).h, 218, 15), `the card's navy fade (${c.heroFade})`);
+});
+
+test('every photo colour keeps the contrast guarantees', () => {
+  const photos = ['#c9a04a', '#6a7040', '#97693f', '#ff0000', '#00ffd5', '#f5e663', '#3a1bd1', '#e85d9a', '#7a2a2a']
+    .map((accent) => ({ accent, dark: '#0d0d0d' }));
+  const cards = [{}, { card_bg_color: '#000' }, { brand_color: '#fff' }, { brand_color: '#777777' }, { card_bg_color: '#1E1F22', surface: 'creme' }];
+  for (const p of photos) for (const c of cards) assertReadable(themeFromCard(c, p), `${JSON.stringify(c)} + ${p.accent}`);
+});
