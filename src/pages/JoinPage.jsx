@@ -6,9 +6,6 @@ import { SIGNUP_SOURCES, normalizeSource, isAgentWord } from '../lib/sources';
 import { addMine, ownerLink } from '../lib/myCards';
 import PhoneField, { phoneValueError } from '../components/PhoneField';
 import WalletButtons from '../components/WalletButtons';
-import WalletPassPreview from '../components/WalletPassPreview';
-import WalletPassLive from '../components/WalletPassLive';
-import PremiumLoyaltyCard from '../components/PremiumLoyaltyCard';
 import Fireworks from '../components/Fireworks';
 
 /* /join/:slug — the customer's signup (redesigned 2026-10-09 to the user's
@@ -119,14 +116,10 @@ function Brand() {
 
 function Success({ result, tenant }) {
   const bc = result.barcode_id;
-  const [data, setData] = useState(null);
   const [toast, setToast] = useState('');
   // a Wallet button for this phone? (null: not known yet) — « Voir ma carte »
   // only without one (user, 2026-10-13, BUG-008: the card must go to the Wallet)
   const [walletShown, setWalletShown] = useState(null);
-  // /card/<id> is read only if the live pass cannot be drawn (onFail below):
-  // the page that works needs the card's own view and nothing else.
-  const ownDrawing = () => api.get(`/card/${bc}`).then(({ data: d }) => setData(d)).catch(() => setData(null));
   // the form was scrolled down: the page opens on « Félicitations » and its
   // Wallet button, never halfway down (user, 2026-10-16)
   useEffect(() => { window.scrollTo(0, 0); }, []);
@@ -160,8 +153,7 @@ function Success({ result, tenant }) {
 
       {/* « Ajouter à Apple / Google Wallet » comes first, where the thumb
           already is (user, 2026-10-16: the button sat under a card 500 px tall,
-          off screen — the one thing the customer must do needed a scroll). The
-          card follows, to be looked at; it never holds the button back. */}
+          off screen — the one thing the customer must do needed a scroll). */}
       <div className="mx-auto mt-5 max-w-[360px] text-left">
         <WalletButtons barcodeId={bc} onError={say} phoneOnly big onShown={setWalletShown} />
         {walletShown === false && (
@@ -172,19 +164,9 @@ function Success({ result, tenant }) {
         )}
       </div>
 
-      {/* the card as the owner designed it — the very pass the Wallet gets
-          (iOS 27 poster included), not a drawing of an older layout (BUG-008) */}
-      <div className="mt-6 flex justify-center">
-        <div className="w-fit">
-          <WalletPassLive barcodeId={bc} width={Math.min(360, (typeof window !== 'undefined' ? window.innerWidth : 360) - 40)}
-                          onFail={ownDrawing}
-                          fallback={data?.card ? (
-                            data.card.layout_style === 'wallet'
-                              ? <WalletPassPreview customer={data.customer} tenant={data.tenant} card={data.card} width={360} />
-                              : <div className="w-full max-w-[360px]"><PremiumLoyaltyCard customer={data.customer} tenant={data.tenant} card={data.card} /></div>
-                          ) : null} />
-        </div>
-      </div>
+      {/* no card here (user, 2026-11-25): the fireworks and the buttons only —
+          the card is looked at in the Wallet. The pass the Wallet gets is the
+          owner's current design (BUG-008), drawn nowhere on this page. */}
 
       <div className="mx-auto mt-5 max-w-[360px] space-y-3 text-left">
         <div className="grid grid-cols-3 gap-2">
