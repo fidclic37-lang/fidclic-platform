@@ -3864,6 +3864,34 @@ def download_apple_pass(barcode_id: str, request: Request = None):
     return resp
 
 
+# The wallet lane and the server are two functions, two clocks: an iPhone's
+# link may read as a hair before the download it follows.
+ADDED_CLOCK_SLACK = timedelta(seconds=5)
+
+
+@router.get("/api/card/{barcode_id}/apple-wallet/added")
+def apple_pass_added(barcode_id: str, request: Request = None):
+    """Is the card in an iPhone's Wallet since its pass was last downloaded?
+    (user, 2026-11-25: added, but the Wallet app never opened.) Safari adds the
+    card and comes back without telling the page; the iPhone tells us instead,
+    by linking itself to the card (register_device). The page asks this after
+    « Ajouter à Apple Wallet », then opens the Wallet app. Only the card's key
+    (or the shop), like the pass; the answer is that one yes or no."""
+    import server as core
+    cust = core._card_customer(barcode_id, request)
+    downloaded = _aware_dt(cust.get("apple_downloaded_at"))
+    if not downloaded:
+        return {"added": False}
+    since = downloaded - ADDED_CLOCK_SLACK
+    added_at = _aware_dt(cust.get("wallet_added_at"))
+    if added_at and added_at >= since:
+        return {"added": True}
+    last = next(iter(_db.pass_registrations.find({"serial": cust.get("barcode_id")}, {"_id": 0, "created_at": 1})
+                     .sort("created_at", -1).limit(1)), None)
+    at = _aware_dt((last or {}).get("created_at"))
+    return {"added": bool(at and at >= since)}
+
+
 @router.get("/api/card/{barcode_id}/wallet-strip.png")
 def wallet_strip(barcode_id: str, fmt: Optional[str] = None):
     """The card's banner with the meter painted on it.

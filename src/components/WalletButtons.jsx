@@ -1,8 +1,9 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import api from '../lib/api';
 import { keyOf } from '../lib/myCards';
 import { phoneWallet as _phoneWallet, phoneWallets, walletOrder } from '../lib/phoneWallet';
 import { here as walletPlace, safariLink } from '../lib/iosSafari';
+import { APPLE_WALLET_APP, waitForAppleAdd } from '../lib/walletOpen';
 
 /**
  * WalletButtons — "Ajouter à Apple Wallet" / "Ajouter à Google Wallet" on the
@@ -10,9 +11,14 @@ import { here as walletPlace, safariLink } from '../lib/iosSafari';
  * configured (GET /api/wallet/config), so nothing fake is ever shown.
  *
  *   Apple  → a direct link to /api/card/<id>/apple-wallet.pkpass. Safari on
- *            iOS opens the signed pass in Wallet's "Add" sheet.
+ *            iOS opens the signed pass in Wallet's "Add" sheet. iOS then comes
+ *            back to Safari: once the iPhone has told the server the card is
+ *            in its Wallet, the page opens the Wallet app (lib/walletOpen,
+ *            user 2026-11-25) and offers « Ouvrir Apple Wallet ».
  *   Google → GET /api/card/<id>/google-wallet returns the signed
- *            "Save to Google Wallet" URL (loyalty object created on demand).
+ *            "Save to Google Wallet" URL (loyalty object created on demand);
+ *            once ready, the button is that link itself, so Android hands it
+ *            to the Google Wallet app.
  *   Samsung → GET /api/card/<id>/samsung-wallet returns Samsung's Data Fetch
  *            Link; Samsung then asks our server for the card
  *            (features/samsung_wallet, 2026-11-11).
@@ -40,6 +46,11 @@ export default function WalletButtons({ barcodeId, onError, phoneOnly = false, o
   // the steps (`help`); arrived in Safari from there, the button is pointed out
   const [help, setHelp] = useState(false);
   const [copied, setCopied] = useState(false);
+  // the card is in this iPhone's Wallet (the iPhone told the server)
+  const [appleAdded, setAppleAdded] = useState(false);
+  const waiting = useRef(false);
+  const gone = useRef(false);
+  useEffect(() => () => { gone.current = true; }, []);
   const [pointed] = useState(() => {
     try {
       const q = new URLSearchParams(window.location.search);
@@ -94,11 +105,27 @@ export default function WalletButtons({ barcodeId, onError, phoneOnly = false, o
   const appleHref = place === 'other'
     ? safariLink(cardInSafari)
     : `/api/card/${barcodeId}/apple-wallet.pkpass${key ? `?k=${encodeURIComponent(key)}` : ''}`;
-  const toSafari = () => {
+  const onApple = () => {
+    if (place === 'safari') { waitForWallet(); return; }
     if (place !== 'other') return;
     setCopied(false);
     // Safari opened: this page is hidden. Still here after a moment: the steps.
     window.setTimeout(() => { if (!document.hidden) setHelp(true); }, 1500);
+  };
+  // after the tap: wait for the iPhone's word, then open the Wallet app
+  const waitForWallet = () => {
+    if (waiting.current || appleAdded) return;
+    waiting.current = true;
+    waitForAppleAdd({
+      ask: () => api.get(`/card/${barcodeId}/apple-wallet/added`).then((r) => r.data?.added === true),
+      hidden: () => document.hidden,
+      cancelled: () => gone.current,
+    }).then((added) => {
+      waiting.current = false;
+      if (!added || gone.current) return;
+      setAppleAdded(true);
+      try { window.location.href = APPLE_WALLET_APP; } catch (_e) { /* the button below stays */ }
+    });
   };
   const copyLink = async () => {
     try { await navigator.clipboard.writeText(cardInSafari); setCopied(true); } catch (_e) { setCopied(false); }
@@ -141,9 +168,9 @@ export default function WalletButtons({ barcodeId, onError, phoneOnly = false, o
     <div className="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-2">
       {order.map((k) => {
         if (!wanted.includes(k)) return null;
-        if (k === 'apple' && cfg.apple) {
+        if (k === 'apple' && cfg.apple && !appleAdded) {        // added: « Ouvrir Apple Wallet » instead
           return (
-            <a key="apple" href={appleHref} onClick={toSafari}
+            <a key="apple" href={appleHref} onClick={onApple}
                className={`${pill} bg-black text-white ${pointed ? 'ring-4 ring-[#3B82F6]/40' : ''}`} style={{ order: isApple ? 0 : 1 }}>
               <svg width={glyph.w} height={glyph.h} viewBox="0 0 24 20" aria-hidden="true">
                 <rect x="1" y="1" width="22" height="18" rx="3" fill="#fff" />
@@ -154,15 +181,19 @@ export default function WalletButtons({ barcodeId, onError, phoneOnly = false, o
             </a>
           );
         }
+        if (k === 'google' && cfg.google && googleUrl) {
+          return (
+            <a key="google" href={googleUrl} className={`${pill} bg-[#1F1F1F] text-white`}>
+              <GoogleGlyph {...glyph} />
+              Ajouter à Google Wallet
+            </a>
+          );
+        }
         if (k === 'google' && cfg.google) {
           return (
             <button key="google" type="button" onClick={saveGoogle} disabled={busy}
                     className={`${pill} bg-[#1F1F1F] text-white`}>
-              <svg width={glyph.w} height={glyph.h} viewBox="0 0 24 20" aria-hidden="true">
-                <rect x="1" y="1" width="22" height="18" rx="4" fill="#fff" />
-                <path d="M3 8c0-2 1.5-3.5 3.5-3.5H21v4H3z" fill="#EA4335" /><path d="M3 8h18v4H3z" fill="#FBBC05" />
-                <path d="M3 12h18v2.5c0 2-1.5 3.5-3.5 3.5H3z" fill="#34A853" /><path d="M3 8v10h6V8z" fill="#4285F4" />
-              </svg>
+              <GoogleGlyph {...glyph} />
               {busy ? 'Ouverture…' : 'Ajouter à Google Wallet'}
             </button>
           );
@@ -182,6 +213,12 @@ export default function WalletButtons({ barcodeId, onError, phoneOnly = false, o
         }
         return null;
       })}
+      {appleAdded && (
+        <div data-testid="apple-wallet-added" role="status" className="order-first space-y-2 sm:col-span-2">
+          <p className="text-center text-[14px] font-semibold text-[#15803D]">✓ Carte ajoutée à Apple Wallet</p>
+          <a href={APPLE_WALLET_APP} className={`${pill} bg-[#15803D] text-white`}>Ouvrir Apple Wallet</a>
+        </div>
+      )}
       {pointed && cfg.apple && place === 'safari' && (
         <p data-testid="apple-wallet-here" role="status"
            className="order-first text-center text-[13.5px] font-semibold text-[#1D4ED8] sm:col-span-2">
@@ -203,5 +240,15 @@ export default function WalletButtons({ barcodeId, onError, phoneOnly = false, o
         </div>
       )}
     </div>
+  );
+}
+
+function GoogleGlyph({ w, h }) {
+  return (
+    <svg width={w} height={h} viewBox="0 0 24 20" aria-hidden="true">
+      <rect x="1" y="1" width="22" height="18" rx="4" fill="#fff" />
+      <path d="M3 8c0-2 1.5-3.5 3.5-3.5H21v4H3z" fill="#EA4335" /><path d="M3 8h18v4H3z" fill="#FBBC05" />
+      <path d="M3 12h18v2.5c0 2-1.5 3.5-3.5 3.5H3z" fill="#34A853" /><path d="M3 8v10h6V8z" fill="#4285F4" />
+    </svg>
   );
 }
