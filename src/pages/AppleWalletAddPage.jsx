@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import api from '../lib/api';
-import { addMine, ownerLink } from '../lib/myCards';
+import { addMine, keyOf, ownerLink } from '../lib/myCards';
 import { here as walletPlace, safariLink } from '../lib/iosSafari';
 import { addPageHref, passHref, waitForAppleAdd } from '../lib/walletOpen';
 import { ADDED_HINT } from '../components/WalletButtons';
@@ -21,26 +21,30 @@ const CARD = /^FT-[A-Z0-9]+$/;
 export default function AppleWalletAddPage() {
   const params = useParams();
   const bc = String(params.barcodeId || '').trim().toUpperCase();
-  // the key, read once — then out of the address bar (as on the card page)
+  // the key, only READ while rendering: React may throw a first render away
+  // and render again (CI, 2026-11-25: the address bar already emptied, the
+  // page said « lien invalide »). It leaves the address bar after the render.
   const [key] = useState(() => {
     try {
-      const q = new URLSearchParams(window.location.search);
-      const k = (q.get('k') || '').trim();
-      if (q.has('k')) {
-        q.delete('k');
-        const rest = q.toString();
-        window.history.replaceState(window.history.state, '', `${window.location.pathname}${rest ? `?${rest}` : ''}`);
-      }
-      return k;
+      return (new URLSearchParams(window.location.search).get('k') || '').trim() || keyOf(bc) || '';
     } catch (_e) { return ''; }
   });
+  useEffect(() => {
+    try {
+      const q = new URLSearchParams(window.location.search);
+      if (!q.has('k')) return;
+      q.delete('k');
+      const rest = q.toString();
+      window.history.replaceState(window.history.state, '', `${window.location.pathname}${rest ? `?${rest}` : ''}`);
+    } catch (_e) { /* the key stays in the bar: harmless */ }
+  }, []);
   const place = walletPlace();
   const valid = CARD.test(bc) && Boolean(key);
   // checking · ready · added · bad
   const [view, setView] = useState(valid ? 'checking' : 'bad');
   const waiting = useRef(false);
   const gone = useRef(false);
-  useEffect(() => () => { gone.current = true; }, []);
+  useEffect(() => { gone.current = false; return () => { gone.current = true; }; }, []);   // mounted again: alive again
 
   const pass = valid ? passHref(bc, key) : null;
 

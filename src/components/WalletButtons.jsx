@@ -55,17 +55,21 @@ export default function WalletButtons({ barcodeId, onError, phoneOnly = false, o
   // the card's key as the page opened: the links keep it even if the phone's
   // memory loses it before the tap (Soan, 2026-11-25: five « Ajouter » → 403)
   const keyAtOpen = useRef(keyOf(barcodeId));
-  useEffect(() => () => { gone.current = true; }, []);
+  useEffect(() => { gone.current = false; return () => { gone.current = true; }; }, []);   // mounted again: alive again
+  // only read while rendering (a render may be thrown away and redone);
+  // ?wallet= leaves the address bar after it
   const [pointed] = useState(() => {
+    try { return new URLSearchParams(window.location.search).get('wallet') === 'apple'; } catch (_e) { return false; }
+  });
+  useEffect(() => {
+    if (!pointed) return;
     try {
       const q = new URLSearchParams(window.location.search);
-      if (q.get('wallet') !== 'apple') return false;
       q.delete('wallet');
       const rest = q.toString();
       window.history.replaceState(window.history.state, '', `${window.location.pathname}${rest ? `?${rest}` : ''}${window.location.hash}`);
-      return true;
-    } catch (_e) { return false; }
-  });
+    } catch (_e) { /* stays in the bar: harmless */ }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     // The card's business plan decides too (Super admin › Plan Limits › Wallet).

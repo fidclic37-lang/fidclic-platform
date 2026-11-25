@@ -26,6 +26,7 @@ const UA = {
   instagram: `${IOS} Mobile/22B83 Instagram 357.0.0.25.101 (iPhone15,2; iOS 18_1; fr_FR; fr; scale=3.00; 1179x2556; 652397411)`,
   android: 'Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0 Mobile Safari/537.36',
 };
+const uniquePhone = (p) => `${p}${String(Math.floor(Math.random() * 1e8)).padStart(8, '0')}`;
 const phone = (ua) => ({ userAgent: ua, viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, acceptDownloads: true });
 
 // a fresh client: signed up on the page, its card number and key read back
@@ -39,7 +40,7 @@ async function newCard(browser) {
   const store = page.getByLabel('Votre établissement');
   if (await store.count()) await store.selectOption({ index: 1 });
   await page.getByLabel('Nom complet').fill('Ajout Test');
-  await page.locator('#join-phone').fill(`06${String(Date.now()).slice(-8)}`);
+  await page.locator('#join-phone').fill(uniquePhone('06'));
   await page.getByLabel('Code postal').fill('37000');
   await page.getByLabel(/Date de naissance/).fill('03041992');
   await page.locator('#join-form input[type="checkbox"]').check();
@@ -80,7 +81,7 @@ test.describe('Chrome on an iPhone, after the signup', () => {
     const store = page.getByLabel('Votre établissement');
     if (await store.count()) await store.selectOption({ index: 1 });
     await page.getByLabel('Nom complet').fill('Chrome Test');
-    await page.locator('#join-phone').fill(`07${String(Date.now()).slice(-8)}`);
+    await page.locator('#join-phone').fill(uniquePhone('07'));
     await page.getByLabel('Code postal').fill('37000');
     await page.getByLabel(/Date de naissance/).fill('03041992');
     await page.locator('#join-form input[type="checkbox"]').check();
@@ -185,7 +186,7 @@ test.describe('Safari, the signup\'s own button', () => {
     const store = page.getByLabel('Votre établissement');
     if (await store.count()) await store.selectOption({ index: 1 });
     await page.getByLabel('Nom complet').fill('Memoire Test');
-    await page.locator('#join-phone').fill(`06${String(Date.now()).slice(-8)}`);
+    await page.locator('#join-phone').fill(uniquePhone('06'));
     await page.getByLabel('Code postal').fill('37000');
     await page.getByLabel(/Date de naissance/).fill('03041992');
     await page.locator('#join-form input[type="checkbox"]').check();
