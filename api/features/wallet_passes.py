@@ -1242,8 +1242,8 @@ def featured_target(action: Dict[str, str], serial: str, tenant: Dict[str, Any],
     owner key, so the card links carry it on (services/card_owner)."""
     kind = FEATURED_TYPES.get(action.get("type") or "", ("", ""))[1]
     card_url = f"{_site_url()}/card/{serial}"
-    if kind == "offers":                        # user, 2026-10-07: offers only, not the whole card
-        return action.get("url") or (CO.owner_url(_site_url(), serial, "/offres") if owner else f"{card_url}/offres")
+    if kind == "offers":                        # user, 2026-11-25: « Ma carte en ligne » itself (was /offres)
+        return action.get("url") or (CO.owner_url(_site_url(), serial) if owner else card_url)
     if kind == "program":
         return action.get("url") or (CO.owner_url(_site_url(), serial, query={"onglet": "programme"}) if owner
                                      else f"{card_url}?onglet=programme")

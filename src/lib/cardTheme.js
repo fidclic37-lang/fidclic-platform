@@ -194,6 +194,10 @@ export const CARD_PRESETS = [
  *   · every text colour is checked: ≥ 4.5:1 for text, the white greeting on
  *     the fade too — lightness is moved until it reads
  *   · a missing or broken colour falls back to a neutral slate
+ *   · themeFromCard(card, photo): a card with no colour of its own (black /
+ *     white / grey) takes its accent from its photo (lib/photoPalette), exactly
+ *     as if the owner had set it; the photo's dark goes under the photo when
+ *     the card has no dark colour. A chromatic card ignores the photo.
  *
  * Tests: node --test src/lib/cardTheme.test.js
  */
@@ -256,12 +260,22 @@ const firstColor = (...vals) => { for (const v of vals) { const c = parseColor(v
 const NEUTRAL = { h: 220, s: 0.12, brand: '#273142', accent: '#3b6fd6' };
 const OK_SOFT = '#e5f3eb';
 
-export function themeFromCard(card) {
+export function themeFromCard(card, photo) {
   const c = card && typeof card === 'object' ? card : {};
   const d = c.design && typeof c.design === 'object' ? c.design : {};
-  const brandRaw = firstColor(c.brand_color, c.card_bg_color, c.primary_color, d.primary_color);
-  const accentRaw = [c.accent_color, c.poster_footer_color, c.logo_text_color, d.accent_color, c.secondary_color]
+  const cardBrand = firstColor(c.brand_color, c.card_bg_color, c.primary_color, d.primary_color);
+  const cardAccent = [c.accent_color, c.poster_footer_color, c.logo_text_color, d.accent_color, c.secondary_color]
     .map(parseColor).find((x) => x && chromatic(x)) || null;
+  // the card's photo (lib/photoPalette): its colour only when the owner set none
+  // (black / white / grey in Pass Designer — user, 2026-11-25, Royal Trim)
+  const p = photo && typeof photo === 'object' ? photo : {};
+  const photoAccent = typeof p.accent === 'string' && parseColor(p.accent) && chromatic(parseColor(p.accent)) ? parseColor(p.accent) : null;
+  const photoDark = typeof p.dark === 'string' ? parseColor(p.dark) : null;
+  const ownerColour = !!cardAccent || (!!cardBrand && chromatic(cardBrand));
+  const fromPhoto = !ownerColour && !!photoAccent;
+  const accentRaw = cardAccent || (fromPhoto ? photoAccent : null);
+  // no colour at all + a coloured photo: a near-black card, the photo's dark if it is one
+  const brandRaw = cardBrand || (fromPhoto ? (photoDark && toHsl(photoDark).l < 0.2 ? photoDark : INK_DARK.toLowerCase()) : null);
   const neutral = !brandRaw && !accentRaw;
 
   const brand = brandRaw || NEUTRAL.brand;
@@ -316,8 +330,10 @@ export function themeFromCard(card) {
       : `linear-gradient(90deg,${btn},${NEUTRAL.accent})`;
 
   // under the photo: the card's own dark colour (its surface, else its brand)
-  let surface = firstColor(c.surface_color, SURFACE_PRESETS[c.surface], c.card_bg_color) || brand;
+  // — else the photo's dark (a white card, or no colour at all)
+  let surface = firstColor(c.surface_color, SURFACE_PRESETS[c.surface], c.card_bg_color) || brandRaw || photoDark || brand;
   if (toHsl(surface).l > 0.6 && brandHsl.l <= 0.6) surface = brand;
+  if (toHsl(surface).l > 0.6 && photoDark && toHsl(photoDark).l <= 0.6) surface = photoDark;
   const sHsl = toHsl(surface);
   const heroFade = readable(hsl(sHsl.h, Math.min(sHsl.s, 0.8), Math.min(sHsl.l, 0.16)), ['#ffffff']);
 

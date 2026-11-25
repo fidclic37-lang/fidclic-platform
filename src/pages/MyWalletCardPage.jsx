@@ -14,7 +14,8 @@ import { cycleVisits, rewardsPending } from '../lib/cardCycle';
 import { protectNames } from '../lib/translator';
 import { liveOffers } from '../lib/cardOffers';
 import { themeFromCard, themeVars } from '../lib/cardTheme';
-import { activityTime, activityRow, pointsBox, tabFromSearch, searchForTab, socialLinks } from '../lib/cardPage';
+import { photoPalette } from '../lib/photoPalette';
+import { activityTime, activityRow, pointsBox, tabFromSearch, searchForTab, socialLinks, rewardsHref, navActive } from '../lib/cardPage';
 import './MyWalletCardPage.css';
 
 /*
@@ -28,13 +29,18 @@ import './MyWalletCardPage.css';
  *   Accueil      the mockup + the missed-offers banner + the automation message
  *   Ma carte     the Wallet pass, Apple / Google / Samsung, share · home screen ·
  *                print, the PWA install prompt, the geolocation consent
- *   Récompenses  « Le programme », the reward waiting at the till, the défis
+ *   Récompenses  a LINK to « Vos offres » (/card/{bc}/offres, CardOffersPage —
+ *                user, 2026-11-25), not an in-page tab
  *   Mon compte   paramètres, avis, à propos, RGPD, delete the card
  *
- * Tabs live in the address bar (?onglet=carte|recompenses|compte|historique;
- * the Wallet « Programme » tile's ?onglet=programme is Récompenses) so the back
- * button walks them. Colours come from the card itself (lib/cardTheme
- * themeFromCard), words from lib/cardPage.
+ * Tabs live in the address bar (?onglet=carte|compte|historique) so the back
+ * button walks them. Hidden views, no bottom item lit: ?onglet=historique and
+ * ?onglet=programme / ?onglet=recompenses — « Le programme », the reward
+ * waiting at the till, the défis (the Wallet « Avantages membres » tile).
+ * Colours come from the card itself, else from its photo (lib/cardTheme
+ * themeFromCard + lib/photoPalette), words from lib/cardPage.
+ * Header (2026-11-25): logo + shop name + tagline only — no bell, no account
+ * button; « Bonjour » right under it, the photo fills the hero (cover).
  */
 
 const FONT_ID = 'wcp-font-jakarta';
@@ -151,7 +157,7 @@ const fmtDay = (s) => {
 const TAB_DEFS = [
   { key: 'accueil', label: 'Accueil', icon: I.home },
   { key: 'carte', label: 'Ma carte', icon: I.card },
-  { key: 'recompenses', label: 'Récompenses', icon: I.gift(23) },
+  { key: 'recompenses', label: 'Récompenses', icon: I.gift(23), link: true },   // → « Vos offres » (2026-11-25)
   { key: 'compte', label: 'Mon compte', icon: I.user(23) },
 ];
 
@@ -622,8 +628,20 @@ const CardView = () => {
     loadHistory(null);
   }, [tab, data?.customer?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // The shop's colours, calmed (lib/cardTheme), and the mockup's font
-  const theme = React.useMemo(() => themeFromCard(data?.card), [data?.card]);
+  // The shop's colours, calmed (lib/cardTheme), and the mockup's font. A card
+  // with no colour of its own (black / white / grey) takes its photo's colours
+  // (lib/photoPalette, user 2026-11-25): read from the picture the hero already
+  // loads — no API request — and the page re-themes when they arrive.
+  const heroSrc = data?.card?.hero_photo_url;
+  const [photoPal, setPhotoPal] = useState(null);
+  useEffect(() => {
+    const src = String(heroSrc || '').trim();
+    if (!/^(https?:\/\/|\/(?!\/)|data:image\/)/i.test(src)) { setPhotoPal(null); return undefined; }
+    let alive = true;
+    photoPalette(src).then((pal) => { if (alive) setPhotoPal(pal); });
+    return () => { alive = false; };
+  }, [heroSrc]);
+  const theme = React.useMemo(() => themeFromCard(data?.card, photoPal), [data?.card, photoPal]);
   useEffect(() => {
     if (document.getElementById(FONT_ID)) return;
     const l = document.createElement('link');
@@ -822,7 +840,7 @@ const CardView = () => {
   // ─────────────────────────────────────────────────── Accueil
   const home = (
     <>
-      <div className={`hero${heroUrl ? '' : ' nophoto'}`} data-testid="card-hero" style={heroUrl ? { '--hero': heroUrl } : undefined}>
+      <div className={`hero${heroUrl ? '' : ' nophoto'}`} data-testid="card-hero">
         {heroUrl && <div className="hero-img" data-testid="hero-photo" aria-hidden="true" style={{ backgroundImage: heroUrl }} />}
         {heroUrl && <div className="hero-shade" aria-hidden="true" />}
         <header className="top">
@@ -833,17 +851,11 @@ const CardView = () => {
               {String(card.tagline || '').trim() && <div className="tag" data-testid="hero-tagline">{String(card.tagline).trim()}</div>}
             </div>
           </div>
-          <div className="icons">
-            <Link to={`/card/${barcodeId}/offres${q}`} className="round" aria-label="Notifications">
-              {I.bell}{(liveOfferCount > 0 || missed) && <span className="dot" aria-hidden="true" />}
-            </Link>
-            <button type="button" className="round" aria-label="Mon compte" onClick={() => goTab('compte')}>{I.user()}</button>
-          </div>
         </header>
+        <div className="hello"><h1>{firstName ? <>Bonjour, <span className="notranslate" translate="no">{firstName}</span> !</> : 'Bonjour !'}</h1></div>
         <div className="hero-space">
           {!heroUrl && <span data-testid="hero-logo"><ShopLogo url={card.logo_url} name={shop} className="biglogo" /></span>}
         </div>
-        <div className="hello"><h1>{firstName ? <>Bonjour, <span className="notranslate" translate="no">{firstName}</span> !</> : 'Bonjour !'}</h1></div>
       </div>
       <div className="hero-tail" aria-hidden="true" />
       <div className="stack">
@@ -991,7 +1003,7 @@ const CardView = () => {
   const defis = data?.defis || {};
   const recompensesPanel = (
     <>
-      {tabHead('Récompenses')}
+      {tabHead('Récompenses', () => (location.state?.cardTab ? navigate(-1) : goTab('accueil')))}
       <div className="stack">
         {/* A full card restarts on the next visit; its reward stays valid until handed over */}
         {pending > 0 && (
@@ -1181,31 +1193,40 @@ const CardView = () => {
 
   const panels = { accueil: home, carte: cartePanel, recompenses: recompensesPanel, compte: comptePanel, historique: historyPanel };
   const tabLabel = TAB_DEFS.find((t) => t.key === tab)?.label || 'Historique';
+  // the lit bottom item: none on the hidden views (programme, historique)
+  const lit = navActive(tab);
+  const hidden = !lit;
 
   return (
     <div className="wcp" data-testid="card-page" style={themeVars(theme)}>
       <div className="wcp-col" role="tabpanel" id={`wcp-panel-${tab}`}
-            aria-labelledby={tab === 'historique' ? undefined : `wcp-tab-${tab}`} aria-label={tab === 'historique' ? tabLabel : undefined}>
+            aria-labelledby={hidden ? undefined : `wcp-tab-${tab}`} aria-label={hidden ? tabLabel : undefined}>
         {panels[tab] || home}
       </div>
 
       <nav className="wcp-nav" aria-label="Ma carte en ligne">
         <div role="tablist" aria-label="Rubriques de la carte">
-          {TAB_DEFS.map((t) => (
+          {TAB_DEFS.map((t) => (t.link ? (
+            // « Récompenses »: a page of its own (« Vos offres »), not a panel here
+            <Link key={t.key} to={rewardsHref(barcodeId, window.location.search) || '#'} className="navlink">
+              {t.icon}{t.label}
+            </Link>
+          ) : (
             <button key={t.key} type="button" role="tab" id={`wcp-tab-${t.key}`}
-                    aria-selected={tab === t.key} aria-controls={tab === t.key ? `wcp-panel-${t.key}` : undefined}
-                    tabIndex={tab === t.key || (tab === 'historique' && t.key === 'accueil') ? 0 : -1}
+                    aria-selected={lit === t.key} aria-controls={lit === t.key ? `wcp-panel-${t.key}` : undefined}
+                    tabIndex={lit === t.key || (hidden && t.key === 'accueil') ? 0 : -1}
                     onClick={() => goTab(t.key)}
                     onKeyDown={(e) => {
                       if (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft') return;
-                      const i = TAB_DEFS.findIndex((x) => x.key === t.key);
-                      const next = TAB_DEFS[(i + (e.key === 'ArrowRight' ? 1 : TAB_DEFS.length - 1)) % TAB_DEFS.length];
+                      const tabs = TAB_DEFS.filter((x) => !x.link);
+                      const i = tabs.findIndex((x) => x.key === t.key);
+                      const next = tabs[(i + (e.key === 'ArrowRight' ? 1 : tabs.length - 1)) % tabs.length];
                       goTab(next.key);
                       setTimeout(() => document.getElementById(`wcp-tab-${next.key}`)?.focus(), 0);
                     }}>
               {t.icon}{t.label}
             </button>
-          ))}
+          )))}
         </div>
       </nav>
 

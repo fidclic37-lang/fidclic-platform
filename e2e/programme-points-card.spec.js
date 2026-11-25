@@ -29,13 +29,14 @@ test('a points-per-euro card counts in points, not visits', async ({ page, reque
   await page.goto(`/card/${made.barcode_id}?k=${made.card_key}`);
   // the home's points box speaks points too (redesign 2026-11-25)
   await expect(page.getByTestId('points-box')).toContainText('Plus que 75 points pour obtenir votre récompense !');
-  // the pass lives in the « Ma carte » tab, « Le programme » in « Récompenses » (2026-11-25)
+  // the pass lives in the « Ma carte » tab (2026-11-25)
   await page.getByRole('tab', { name: 'Ma carte' }).click();
   const pass = page.getByTestId('wallet-pass-preview');
   await expect(pass).toContainText('Encore 75 points · Un dessert offert');
   await expect(pass).not.toContainText(/visites?\b.*dessert/);
 
-  await page.getByRole('tab', { name: 'Récompenses' }).click();
+  // « Le programme » is the hidden view ?onglet=programme (the bottom « Récompenses » opens « Vos offres », 2026-11-25)
+  await page.goto(`/card/${made.barcode_id}?onglet=programme&k=${made.card_key}`);
   await expect(page.getByTestId('programme-earning')).toContainText('2 pts par euro dépensé');
   await expect(page.getByTestId('programme-progress')).toContainText('Débloquée dès 100 points — 25 / 100');
   await expect(page.getByText('Points par visite')).toHaveCount(0);

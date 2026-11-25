@@ -107,12 +107,25 @@ test('a points card: photo, greeting, the programme\'s words, activities, networ
   await expect(page.getByRole('heading', { name: 'Bonjour, Thomas !' }), 'white on the photo').toHaveCSS('color', 'rgb(255, 255, 255)');
   await expect(page.locator('body')).not.toContainText('Ravi de vous revoir');
   await expect(hero.getByTestId('hero-photo')).toHaveCSS('background-image', /hero\.svg/);
-  await expect(hero.getByTestId('hero-photo')).toHaveCSS('background-size', 'contain');
+  // user, 2026-11-25: the photo fills the whole hero (cover), no blurred copy beside it
+  await expect(hero.getByTestId('hero-photo')).toHaveCSS('background-size', 'cover');
+  const before = await hero.evaluate((el) => {
+    const b = getComputedStyle(el, '::before');
+    return { content: b.content, filter: b.filter, image: b.backgroundImage };
+  });
+  expect(before.content === 'none' || (before.filter === 'none' && !/hero\.svg/.test(before.image)), JSON.stringify(before)).toBe(true);
   await expect(hero.getByTestId('hero-tagline')).toHaveText('Votre fidélité, notre priorité');
-  await expect(hero.getByRole('link', { name: 'Notifications' })).toBeVisible();
-  await expect(hero.getByRole('button', { name: 'Mon compte' })).toBeVisible();
+  // no bell, no account button in the header (user, 2026-11-25)
+  await expect(hero.getByRole('link', { name: 'Notifications' })).toHaveCount(0);
+  await expect(hero.getByRole('button', { name: 'Mon compte' })).toHaveCount(0);
+  await expect(hero.locator('.round')).toHaveCount(0);
   const heroBox = await hero.boundingBox();
-  expect(heroBox.height, 'hero about the mockup\'s height').toBeGreaterThan(330);
+  // « Bonjour, Thomas ! » right under the header, in the photo's top half
+  const hello = await page.getByRole('heading', { name: 'Bonjour, Thomas !' }).boundingBox();
+  const head = await hero.locator('header').boundingBox();
+  expect(hello.y, 'greeting below the header').toBeGreaterThanOrEqual(head.y + head.height - 1);
+  expect(hello.y + hello.height / 2, 'greeting above the photo\'s middle').toBeLessThan(heroBox.y + heroBox.height / 2);
+  expect(heroBox.height, 'hero about the mockup\'s height').toBeGreaterThan(290);
   expect(heroBox.height).toBeLessThan(400);
 
   const box = page.getByTestId('points-box');
@@ -247,15 +260,9 @@ test('every feature of the old page lives in a tab; tabs are in the address bar'
   await shots(page, 'card-online-tab-carte');
   expect(await noSideScroll(page)).toBeLessThanOrEqual(0);
 
-  // Récompenses: the programme, the reward waiting, the défi
-  await tab('Récompenses').click();
-  await expect(page).toHaveURL(/onglet=recompenses/);
-  await expect(page.getByTestId('programme-earning')).toContainText('2 pts par euro dépensé');
-  await expect(page.getByTestId('programme-progress')).toContainText('Débloquée dès 100 points — 25 / 100');
-  await expect(page.getByTestId('pending-reward')).toContainText('1 récompense à récupérer');
-  await expect(page.getByTestId('defi-running')).toContainText('Défi de novembre');
-  await shots(page, 'card-online-tab-recompenses');
-  expect(await noSideScroll(page)).toBeLessThanOrEqual(0);
+  // Récompenses is a link to « Vos offres » now (user, 2026-11-25) — not a tab
+  await expect(page.getByRole('tab', { name: 'Récompenses' })).toHaveCount(0);
+  await expect(page.getByRole('link', { name: 'Récompenses' })).toHaveAttribute('href', `/card/${bc}/offres`);
 
   // Mon compte: paramètres, avis, à propos, RGPD
   await tab('Mon compte').click();
@@ -271,20 +278,47 @@ test('every feature of the old page lives in a tab; tabs are in the address bar'
 
   // the back button walks the tabs back
   await page.goBack();
-  await expect(tab('Récompenses')).toHaveAttribute('aria-selected', 'true');
-  await page.goBack();
   await expect(tab('Ma carte')).toHaveAttribute('aria-selected', 'true');
   await page.goBack();
   await expect(tab('Accueil')).toHaveAttribute('aria-selected', 'true');
-
-  // the account button in the header opens Mon compte
-  await page.getByTestId('card-hero').getByRole('button', { name: 'Mon compte' }).click();
-  await expect(tab('Mon compte')).toHaveAttribute('aria-selected', 'true');
 });
 
-test('the Wallet « Programme » tile (?onglet=programme) opens Récompenses', async ({ page, request }) => {
+test('the bottom « Récompenses » opens « Vos offres » of this card, and « Voir ma carte » comes back', async ({ page, request }) => {
+  const made = await newCard(request, 'Lien Recompenses');
+  const bc = made.barcode_id;
+  await page.goto(`/card/${bc}?k=${made.card_key}`);
+  await expect(page.getByRole('heading', { name: /Bonjour/ })).toBeVisible();
+  await page.getByRole('navigation', { name: 'Ma carte en ligne' }).getByRole('link', { name: 'Récompenses' }).click();
+  await expect(page).toHaveURL(new RegExp(`/card/${bc}/offres$`));
+  await expect(page.getByRole('heading', { name: /^Vos offres/ })).toBeVisible();
+  await page.getByRole('link', { name: 'Voir ma carte' }).click();
+  await expect(page).toHaveURL(new RegExp(`/card/${bc}$`));
+  await expect(page.getByRole('tab', { name: 'Accueil' })).toHaveAttribute('aria-selected', 'true');
+});
+
+test('the Wallet « Avantages membres » tile (?onglet=programme) still opens the programme view', async ({ page, request }) => {
   const made = await newCard(request, 'Tuile Programme');
-  await page.goto(`/card/${made.barcode_id}?onglet=programme&k=${made.card_key}`);
-  await expect(page.getByRole('tab', { name: 'Récompenses' })).toHaveAttribute('aria-selected', 'true');
-  await expect(page.getByRole('tabpanel', { name: 'Récompenses' })).toContainText('Récompense');
+  const bc = made.barcode_id;
+  await stage(page, bc, {
+    card: { programme: 'points_euro', programme_kind: 'points_euro', points_mode: 'per_euro', points_per_euro: 2,
+      reward_points: 100, reward_description: 'Un dessert offert', show_points: true },
+    customer: { points: 25, rewards_pending: 1 },
+    extra: { defis: { running: [{ id: 'd1', title: 'Défi de novembre', target: 3, progress: 1, end_date: '2026-12-31', reward: 'Un café' }], won: [] } },
+  });
+  for (const view of ['programme', 'recompenses']) {
+    await page.goto(`/card/${bc}?onglet=${view}&k=${made.card_key}`);
+    const panel = page.getByRole('tabpanel', { name: 'Récompenses' });
+    await expect(panel).toContainText('Le programme');
+    await expect(page.getByTestId('programme-earning')).toContainText('2 pts par euro dépensé');
+    await expect(page.getByTestId('programme-progress')).toContainText('Débloquée dès 100 points — 25 / 100');
+    await expect(page.getByTestId('pending-reward')).toContainText('1 récompense à récupérer');
+    await expect(page.getByTestId('defi-running')).toContainText('Défi de novembre');
+    // a hidden view: no bottom item lit, and a way back
+    await expect(page.locator('.wcp-nav [aria-selected="true"]')).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Retour' })).toBeVisible();
+  }
+  await shots(page, 'card-online-programme-view');
+  expect(await noSideScroll(page)).toBeLessThanOrEqual(0);
+  await page.getByRole('button', { name: 'Retour' }).click();
+  await expect(page.getByRole('tab', { name: 'Accueil' })).toHaveAttribute('aria-selected', 'true');
 });
