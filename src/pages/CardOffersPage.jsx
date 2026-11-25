@@ -4,6 +4,7 @@ import { Gift, Sparkles, ChevronRight, ChevronLeft, X, ExternalLink, Loader2, Ta
 import api from '../lib/api';
 import { ownerLink, addMine, keyOf } from '../lib/myCards';
 import { cycleVisits, rewardsPending } from '../lib/cardCycle';
+import { liveOffers } from '../lib/cardOffers';
 
 /**
  * « Vos offres » — where « Voir les offres et récompenses » under the Wallet
@@ -164,19 +165,9 @@ export default function CardOffersPage() {
         : 'Carte introuvable.'));
   }, [barcodeId]);
 
-  // offers still valid, newest first; the shop's own offer leads
-  const feed = useMemo(() => {
-    const now = Date.now();
-    const seen = new Set();
-    const out = [];
-    for (const o of data?.offers || []) {
-      if (!o.id || seen.has(o.id)) continue;
-      if (o.valid_until && Date.parse(o.valid_until) < now) continue;
-      seen.add(o.id);
-      out.push({ ...o, _ts: o.kind === 'primary' ? 9e15 : Date.parse(o.sent_at || 0) || 0 });
-    }
-    return out.sort((a, b) => b._ts - a._ts);
-  }, [data]);
+  // offers still valid, newest first; the shop's own offer leads — the same
+  // list the card counts in « Mes offres » (lib/cardOffers)
+  const feed = useMemo(() => liveOffers(data), [data]);
 
   const openItem = (item) => {
     setOpen(item);
