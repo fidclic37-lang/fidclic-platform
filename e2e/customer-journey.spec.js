@@ -133,9 +133,9 @@ test.describe.serial('a customer, end to end', () => {
     await w.clean('card from the offers');
     await page.goto(`/card/${me.barcode}?onglet=programme&k=${me.key}`);   // « Programme »
     await expect(page).toHaveURL(new RegExp(`/card/${me.barcode}`));
-    // « Le programme » is the « Récompenses » tab since the redesign (2026-11-25)
-    await expect(page.getByRole('tab', { name: 'Récompenses' })).toHaveAttribute('aria-selected', 'true');
+    // « Le programme » is a hidden view (no bottom item lit); the bottom « Récompenses » opens « Vos offres » (2026-11-25)
     await expect(page.getByRole('tabpanel', { name: 'Récompenses' })).toContainText('Le programme');
+    await expect(page.locator('.wcp-nav [aria-selected="true"]')).toHaveCount(0);
     await page.getByRole('tab', { name: 'Accueil' }).click();                // this customer's card
     await expect(page.locator('body')).toContainText(me.name.split(' ')[0]);
     await w.clean('programme tile');

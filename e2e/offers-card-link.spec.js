@@ -36,6 +36,9 @@ test('the owner reviewing a client: « Mes offres » and back stays on THAT clie
   await expect(page.getByText('Client', { exact: false }).first()).toBeVisible();
   await expect(page).toHaveURL(new RegExp(`/card/${client.barcode_id}`));
 
+  // the bottom « Récompenses » (a link to « Vos offres » since 2026-11-25) keeps the owner's view too
+  await expect(page.getByRole('navigation', { name: 'Ma carte en ligne' }).getByRole('link', { name: 'Récompenses' }))
+    .toHaveAttribute('href', `/card/${client.barcode_id}/offres?vue=commerce`);
   await page.getByRole('link', { name: /Mes offres/ }).click();
   await expect(page).toHaveURL(new RegExp(`/card/${client.barcode_id}/offres\\?vue=commerce`));
 

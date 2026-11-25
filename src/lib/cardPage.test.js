@@ -5,7 +5,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  activityTime, activityRow, pointsBox, tabFromSearch, searchForTab, socialLinks, TABS,
+  activityTime, activityRow, pointsBox, tabFromSearch, searchForTab, socialLinks, TABS, rewardsHref, navActive,
 } from './cardPage.js';
 
 const nb = (s) => String(s).replace(/[  ]/g, ' ');
@@ -166,6 +166,31 @@ test('searchForTab keeps the shop view, drops one-shot params', () => {
   assert.equal(searchForTab('?vue=commerce&onglet=compte', 'accueil'), '?vue=commerce');
   assert.equal(searchForTab('?offre=c1&notify=1&wallet=apple&k=abc&onglet=programme', 'recompenses'), '?onglet=recompenses');
   assert.equal(searchForTab('?vue=commerce', 'nimporte'), '?vue=commerce');
+});
+
+// user, 2026-11-25: the bottom « Récompenses » opens « Vos offres » (/card/{bc}/offres),
+// the page the Wallet rewards tile opened until now; the old in-page panel stays
+// a hidden view at ?onglet=programme / ?onglet=recompenses (no bottom tab lit there)
+test('rewardsHref: the offers page of THIS card, the shop view kept, nothing else', () => {
+  assert.equal(rewardsHref('FT-AB12CD34', ''), '/card/FT-AB12CD34/offres');
+  assert.equal(rewardsHref('FT-AB12CD34', undefined), '/card/FT-AB12CD34/offres');
+  assert.equal(rewardsHref('FT-AB12CD34', '?vue=commerce'), '/card/FT-AB12CD34/offres?vue=commerce');
+  assert.equal(rewardsHref('FT-AB12CD34', '?onglet=carte&vue=commerce&k=secret&offre=c1'), '/card/FT-AB12CD34/offres?vue=commerce');
+  assert.equal(rewardsHref('FT-AB12CD34', '?k=secret&notify=1'), '/card/FT-AB12CD34/offres', 'the owner key never rides along');
+  assert.equal(rewardsHref('FT-AB12CD34', '?vue=autre'), '/card/FT-AB12CD34/offres');
+  assert.equal(rewardsHref('FT/../x?y', ''), '/card/FT%2F..%2Fx%3Fy/offres', 'an odd id cannot break the path');
+  assert.equal(rewardsHref('', ''), null);
+  assert.equal(rewardsHref(null, '?vue=commerce'), null);
+});
+
+test('navActive: which bottom item is lit — none on the hidden views', () => {
+  assert.equal(navActive('accueil'), 'accueil');
+  assert.equal(navActive('carte'), 'carte');
+  assert.equal(navActive('compte'), 'compte');
+  assert.equal(navActive('recompenses'), null, 'the programme view is not the Récompenses item (that one is a link)');
+  assert.equal(navActive('historique'), null);
+  assert.equal(navActive(undefined), null);
+  assert.equal(navActive('nimporte'), null);
 });
 
 test('socialLinks: only real https links, known networks branded, order kept', () => {
