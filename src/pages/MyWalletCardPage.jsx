@@ -17,6 +17,7 @@ import WalletButtons from '../components/WalletButtons';
 import TierBadge from '../components/TierBadge';
 import { cycleVisits, rewardsPending } from '../lib/cardCycle';
 import { protectNames } from '../lib/translator';
+import { liveOffers } from '../lib/cardOffers';
 
 // ---------------------------------------------------------------------------
 // Element / stamp rendering — mirrors the owner-side designer
@@ -575,6 +576,9 @@ const CardView = () => {
     out.sort((a, b) => (b._ts || 0) - (a._ts || 0));
     return out;
   }, [data?.offers, data?.notifications]);
+  // « Mes offres · N en cours » counts what its page lists: the live offers only,
+  // never the ended campaigns or défis `notifications` still carries (lib/cardOffers)
+  const liveOfferCount = React.useMemo(() => liveOffers(data).length, [data?.offers]);
 
   // « Voir l'offre » on the back of the Wallet pass lands here with
   // ?offre=<campaign id>: open that campaign (photo + full text) right away,
@@ -711,7 +715,7 @@ const CardView = () => {
   // the shop and opened that one instead (QA F34, 2026-10-11)
   const shopView = new URLSearchParams(window.location.search).get('vue') === 'commerce';
   const menu = [
-    { key: 'offers', icon: Sparkles, label: 'Mes offres', hint: mergedFeed.length ? `${mergedFeed.length} en cours` : 'Les offres de la boutique', to: `/card/${barcodeId}/offres${shopView ? '?vue=commerce' : ''}` },
+    { key: 'offers', icon: Sparkles, label: 'Mes offres', hint: liveOfferCount ? `${liveOfferCount} en cours` : 'Les offres de la boutique', to: `/card/${barcodeId}/offres${shopView ? '?vue=commerce' : ''}` },
     { key: 'program', icon: Gift, label: 'Le programme',
       hint: card.reward_description
         ? (programmeOf(card) === 'stamps' ? `${card.reward_description} après ${stampsTarget} visites`
