@@ -8006,42 +8006,86 @@ def _card_customer(barcode_id: str, request: Optional[Request], with_actor: bool
       • an active shop login of that business (owner, admin, manager, staff —
         the dashboard's « Voir sa carte »), or a FidClic super admin. See
         _shop_login_may_use_card for what each may do.
+    Failed lookups are counted per IP (services/card_probe): 429 past the limit.
     """
-    bc = (barcode_id or "").strip().upper()
-    cust = db.customers.find_one({"barcode_id": bc})
-    if not cust:
-        raise HTTPException(status_code=404, detail="Carte introuvable.")
+    cust, who, _stores = _card_access(barcode_id, request, owner_only=owner_only)
     # `with_actor`: who is acting — « client » when the card's own phone holds
     # the key, else the shop account's e-mail. Deleting a card can be either
     # (user, 2026-10-23: « supprimée » did not say which), so the Historique
     # and the Clients list need to know.
-    def _ret(who: Optional[str]):
-        return (cust, who) if with_actor else cust
+    return (cust, who) if with_actor else cust
+
+
+def _login_stores(p: dict, tenant_id: str) -> Optional[List[str]]:
+    """The establishments a shop login covers — None when it covers them all
+    (the owner, a super admin, an account covering every store, or made
+    before stores were assigned). features/team_access._covered's rule."""
+    if p.get("role") in ("business_owner", "super_admin"):
+        return None
+    from features import team_access as _TA
+    all_ids = [s["id"] for s in _TA.stores(tenant_id)]
+    user = db.users.find_one({"email": p.get("sub")}, {"_id": 0, "role": 1, "branch_ids": 1}) or {}
+    covered = _TA._covered(user, all_ids) if user else []
+    return None if set(all_ids) <= set(covered) else covered
+
+
+def _card_access(barcode_id: str, request: Optional[Request], owner_only: bool = False):
+    """_card_customer, plus whose eyes: (customer, actor, stores) — `stores`
+    the establishments a shop login covers, None for everything (the card's
+    own phone, the owner, a super admin, an in-process call). Another store's
+    euros are hidden from a login that does not cover it (features/card_page)."""
+    from services import card_probe as _CP
+    ip = _client_ip(request) if request is not None else ""
+    if ip and _CP.blocked(db, ip):
+        raise HTTPException(status_code=429, detail=_CP.MESSAGE)
+    bc = (barcode_id or "").strip().upper()
+    cust = db.customers.find_one({"barcode_id": bc})
+    if not cust:
+        if ip:
+            _CP.fail(db, ip)
+        raise HTTPException(status_code=404, detail="Carte introuvable.")
     if request is None:                       # an in-process call (tests, other features)
-        return _ret(None)
+        return cust, None, None
     key = request.headers.get("x-card-key") or request.query_params.get("k")
     if _card_owner.valid(bc, key):
-        return _ret("client")
+        return cust, "client", None
     token = auth._view_token(request) or request.cookies.get("access_token")
     if not token:
         header = request.headers.get("authorization") or ""
         token = header[7:] if header.startswith("Bearer ") else None
+    own_shop = False          # a session of this card's own business, refused for its rights: no probe
     if token:
+        p = None
         try:
             p = jwt.decode(token[7:] if token.startswith("Bearer ") else token, auth._secret(),
                            algorithms=[auth.ALGORITHM])
             ok_session = auth._session_check is None or auth._session_check(p.get("sub"), p.get("sid"))
-            if not p.get("purpose") and ok_session and _shop_login_may_use_card(p, cust, request, owner_only):
-                return _ret(p.get("view_by") or p.get("sub") or "l'équipe")
+            own_shop = bool(not p.get("purpose") and ok_session and p.get("role") in SHOP_CARD_ROLES
+                            and p.get("tenant_id") == cust.get("tenant_id"))
+            if not (not p.get("purpose") and ok_session and _shop_login_may_use_card(p, cust, request, owner_only)):
+                p = None
         except Exception:
-            pass
+            p = None
+        if p is not None:
+            return cust, (p.get("view_by") or p.get("sub") or "l'équipe"), _login_stores(p, cust.get("tenant_id"))
+    if ip and not own_shop:
+        _CP.fail(db, ip)
     raise HTTPException(status_code=403, detail="Cette carte n'est pas enregistrée sur cet appareil.")
 
 
 @app.get("/api/card/{barcode_id}")
 def get_wallet_card(barcode_id: str, request: Request = None):
-    cust = _card_customer(barcode_id, request)
+    cust, _who, stores = _card_access(barcode_id, request)
     payload = _serialize_card_payload(cust)
+    # a login that does not cover the client's home store sees no euros
+    # (user rule: managers see that a client exists, not another store's €)
+    if stores is not None and isinstance(payload.get("customer"), dict):
+        home = cust.get("branch_id") or _SC.main_store(cust.get("tenant_id"))
+        if home not in stores:
+            payload["customer"]["total_amount_paid"] = None
+    # « Ma carte en ligne » (2026-11-25): first name, socials, the poster's photo
+    from features import card_page as _CPG
+    _CPG.enrich(payload, cust)
     _log_card_message_view(cust, payload)
     # The only observable "open" a wallet push has: the customer came and
     # looked at their card (also sets customers.last_card_open_at).

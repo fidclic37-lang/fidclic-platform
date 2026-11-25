@@ -423,6 +423,8 @@ class CardDetails(BaseModel):
     website: str = ""
     instagram: str = ""
     facebook: str = ""
+    tiktok: str = ""          # « Ma carte en ligne » (2026-11-25): features/card_page.socials
+    snapchat: str = ""
     custom_sections: List[CardDetailsSection] = Field(default_factory=list)
 
 

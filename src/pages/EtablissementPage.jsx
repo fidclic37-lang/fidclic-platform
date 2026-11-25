@@ -35,6 +35,9 @@ const Block = ({ n, title, children, className = '', action }) => (
   </section>
 );
 
+// the 4 networks shown on the client's online card (features/card_page.socials)
+const SOCIALS = [['instagram', 'Instagram'], ['facebook', 'Facebook'], ['tiktok', 'TikTok'], ['snapchat', 'Snapchat']];
+
 const Label = ({ children, required, right }) => (
   <span className="mb-1.5 flex items-center justify-between text-[13.5px] text-[#1E293B]">
     <span>{children}{required && <span className="ml-0.5 text-[#E11D48]">*</span>}</span>
@@ -277,6 +280,7 @@ export default function EtablissementPage() {
         protectNames([biz.name]);      // the new name shows before the store list is read again
         body.business = { name: biz.name, phone: biz.phone, email: biz.email, sector: biz.sector, description: biz.description,
                           activity_key: biz.activity_key || '',
+                          ...(biz.socials ? { socials: biz.socials } : {}),
                           ...(biz.logo_url !== d.business.logo_url ? { logo_url: biz.logo_url } : {}) };
         body.address = { street: addr.street, postal_code: addr.postal_code, city: addr.city,
                          ...(addr.lat != null ? { lat: addr.lat, lng: addr.lng, pin: addr.pin || 'adresse' } : {}) };
@@ -430,6 +434,16 @@ export default function EtablissementPage() {
           <textarea className={`${inputCls} h-auto min-h-[90px] resize-y py-2.5 leading-snug`} maxLength={500} value={biz.description}
                     onChange={(e) => setBiz({ ...biz, description: e.target.value })} placeholder="Ce qui rend votre commerce unique…" />
           <p className="mt-1 text-right text-[12px] text-[#94A3B8]">{(biz.description || '').length}/500</p>
+          {/* the card's networks (« Ma carte en ligne », 2026-11-25): a handle or the page's link */}
+          <div className="mt-2 grid gap-3 sm:grid-cols-2">
+            {SOCIALS.map(([key, label]) => (
+              <label key={key} className="block"><Label>{label}</Label>
+                <input className={inputCls} value={biz.socials?.[key] || ''} maxLength={300} disabled={!can.brand}
+                       autoCapitalize="none" autoCorrect="off" spellCheck={false}
+                       onChange={(e) => setBiz({ ...biz, socials: { ...(biz.socials || {}), [key]: e.target.value } })}
+                       placeholder="@votrecompte" /></label>
+            ))}
+          </div>
         </Block>
       </div>
       </fieldset>
