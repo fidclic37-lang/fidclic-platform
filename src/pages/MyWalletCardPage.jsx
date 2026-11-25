@@ -15,7 +15,7 @@ import { protectNames } from '../lib/translator';
 import { liveOffers } from '../lib/cardOffers';
 import { themeFromCard, themeVars } from '../lib/cardTheme';
 import { photoPalette } from '../lib/photoPalette';
-import { activityTime, activityRow, pointsBox, tabFromSearch, searchForTab, socialLinks, rewardsHref, navActive } from '../lib/cardPage';
+import { activityTime, activityRow, pointsBox, tabFromSearch, searchForTab, socialLinks, rewardsHref, navActive, reviewOpen } from '../lib/cardPage';
 import './MyWalletCardPage.css';
 
 /*
@@ -744,10 +744,8 @@ const CardView = () => {
 
 
 
-  const recentVisit = (() => {
-    const last = customer.last_visit_date ? new Date(customer.last_visit_date) : null;
-    return !!last && (Date.now() - last.getTime()) / 86400000 <= 14;
-  })();
+  // « Donner mon avis »: 14 days after the last visit — GET /card/{bc} sends it
+  const recentVisit = reviewOpen(customer.last_visit_date);
   const pending = rewardsPending(customer);
   const shareCard = async () => {
     // the card's public link (no owner key): a friend who opens it gets the signup
