@@ -368,6 +368,28 @@ def main():
     check("a model saved before keys were recorded is still recognised by its name",
           S._adopted("t1") >= {first[0]})
 
+    # ---- « Voir tous les modèles » (user, 2026-11-25) ----------------------------------------
+    # The link opened the « Créer un segment » builder; it must show EVERY
+    # model — used or not, empty or not — with its count.
+    print("\nVoir tous les modèles")
+    every = p1.get("all_models") or []
+    check("all the models are sent, not only the five recommended",
+          [m["key"] for m in every] == [m["key"] for m in S.MODELS])
+    check("each carries its count, its name and its description",
+          all(isinstance(m.get("count"), int) and m.get("name") and m.get("description") for m in every))
+    used = next((m for m in every if m["key"] == first[0]), {})
+    check("the model already used says so, with the segment it became",
+          used.get("adopted") is True and bool(used.get("segment_id"))
+          and db.saved_segments.find_one({"tenant_id": "t1", "id": used["segment_id"]}) is not None)
+    check("the others are not marked used", all(not m["adopted"] for m in every if m["key"] != first[0]))
+    check("an empty model is listed too (with 0) — nothing is hidden",
+          all(m["count"] == len(S.evaluate("t1", S._clean_rules(m["rules"]), at=now)) for m in every))
+    check("« Clients inactifs » follows the shop's « Client actif » window here too",
+          next(m for m in every if m["key"] == "inactifs")["rules"]
+          == next(m for m in S._models("t1") if m["key"] == "inactifs")["rules"])
+    check("another shop sees none of t1's segments as used",
+          not any(m["adopted"] for m in S.page(token_data=Rival()).get("all_models", [])))
+
     tips = S._tips(p1["segments"], len(CAST), "t1", now)
     check("each tip carries a real campaign", all(t.get("template") for t in tips))
     sent = tips[0]["template"]
