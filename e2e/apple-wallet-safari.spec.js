@@ -89,9 +89,9 @@ for (const [name, ua] of [['Instagram', UA.instagram], ['Chrome on an iPhone', U
       page.on('request', (r) => { if (r.url().includes('apple-wallet.pkpass')) passes.push(r.url()); });
       await signUp(page);
       const href = await apple(page).getAttribute('href');
-      expect(href).toMatch(/^x-safari-https?:\/\/[^/]+\/card\/FT-[A-Z0-9]+\?/);
+      // the add page (user, 2026-11-25): the Wallet sheet at once, no second tap
+      expect(href).toMatch(/^x-safari-https?:\/\/[^/]+\/card\/FT-[A-Z0-9]+\/ajouter\?/);
       const u = new URL(href.replace(/^x-safari-/, ''));
-      expect(u.searchParams.get('wallet')).toBe('apple');
       expect(u.searchParams.get('k'), 'the card\'s own key goes along').toBeTruthy();
       expect(u.origin).toBe(new URL(page.url()).origin);                   // our own site, nowhere else
       await apple(page).click();

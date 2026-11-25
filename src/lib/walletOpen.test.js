@@ -1,10 +1,12 @@
 // Run: node --test src/lib/walletOpen.test.js
-// « Ajouter à Apple Wallet », then the Wallet opens (user, 2026-11-25). iOS
-// adds the card and comes back to Safari without telling the page; the
-// iPhone tells our server, and the page waits for that word.
+// « Ajouter à Apple Wallet », then that card on the iPhone (user, 2026-11-25).
+// iOS adds the card and comes back to the browser without telling the page;
+// the iPhone tells our server, and the page waits for that word. The card is
+// then opened by its own « Bienvenue » banner — no web page may open Wallet.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { waitForAppleAdd, APPLE_WALLET_APP, WAIT } from './walletOpen.js';
+import { waitForAppleAdd, WAIT, passHref, addPageHref } from './walletOpen.js';
+import * as walletOpen from './walletOpen.js';
 
 // a fake clock: sleep moves time on, nothing really waits
 function clock() {
@@ -12,8 +14,28 @@ function clock() {
   return { now: () => t, sleep: async (ms) => { t += ms; } };
 }
 
-test('the Wallet app link', () => {
-  assert.equal(APPLE_WALLET_APP, 'shoebox://');
+test('no shoebox:// any more: it opened Wallet on the other cards (user, 2026-11-25)', () => {
+  assert.equal(walletOpen.APPLE_WALLET_APP, undefined);
+});
+
+test('the pass link carries the card\'s own key — the phone\'s memory may be gone', () => {
+  assert.equal(passHref('FT-AB12CD34', 'k3y'), '/api/card/FT-AB12CD34/apple-wallet.pkpass?k=k3y');
+  assert.equal(passHref('ft-ab12cd34', 'k3y'), '/api/card/FT-AB12CD34/apple-wallet.pkpass?k=k3y');
+  assert.equal(passHref('FT-AB12CD34', 'a b&c'), '/api/card/FT-AB12CD34/apple-wallet.pkpass?k=a%20b%26c');
+  assert.equal(passHref('FT-AB12CD34', ''), '/api/card/FT-AB12CD34/apple-wallet.pkpass');
+  assert.equal(passHref('FT-AB12CD34', null), '/api/card/FT-AB12CD34/apple-wallet.pkpass');
+  assert.equal(passHref('', 'k'), null);
+  assert.equal(passHref('../admin', 'k'), null, 'only a card number');
+});
+
+test('the add page, for Safari: one tap less than the card page', () => {
+  assert.equal(addPageHref('https://app.fidclic.com', 'FT-AB12CD34', 'k3y'),
+    'https://app.fidclic.com/card/FT-AB12CD34/ajouter?k=k3y');
+  assert.equal(addPageHref('https://app.fidclic.com/', 'ft-ab12cd34', 'k3y'),
+    'https://app.fidclic.com/card/FT-AB12CD34/ajouter?k=k3y');
+  assert.equal(addPageHref('https://app.fidclic.com', 'FT-AB12CD34', ''), null, 'no key: Safari could never add it');
+  assert.equal(addPageHref('https://app.fidclic.com', '', 'k'), null);
+  assert.equal(addPageHref('javascript:alert(1)', 'FT-AB12CD34', 'k'), null, 'a web page only');
 });
 
 test('added at the third answer: true, and no more questions', async () => {
@@ -62,7 +84,6 @@ test('page hidden (the Wallet or another app in front): no question asked', asyn
   assert.equal(r, true);
   assert.equal(asked, 1);
   assert.ok(c.now() >= hiddenUntil);
-  // hidden the whole time: false, never asked
   const c2 = clock();
   asked = 0;
   hiddenUntil = Infinity;
