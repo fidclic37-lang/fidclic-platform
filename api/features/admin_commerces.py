@@ -49,7 +49,7 @@ from pydantic import BaseModel, Field
 from auth import require_role, TokenData, create_access_token, hash_password
 
 router = APIRouter(tags=["admin"])
-from features.platform_access import require_admin
+from features.platform_access import require_admin, require_super
 _db = None
 ADMIN = ["super_admin"]
 # v2 (2026-10-01): weekly cards AND scans — the old per-day numbers are not reused.
@@ -498,6 +498,60 @@ def set_services(tid: str, body: ServicesIn, token_data: TokenData = Depends(req
                    meta={"off": sorted(off), "before": sorted(before), "all_off": bool(body.all_off)})
     forget(tid)
     return _services_view({"services_off": off})
+
+
+# ---------------------------------------------------------------------------
+# « Bouton de la carte client » (user, 2026-11-25): the card page's 3rd home
+# tile — « Prendre rendez-vous » by default — named and linked ONLY by the
+# FidClic super admin, per établissement. Kept on the tenant as
+# card_cta = {store_id: {label, url}} (features/card_page reads it). Reading
+# the list follows the « Commerces » module; writing is the super admin's
+# alone — no owner, manager or FidClic team role writes it.
+# ---------------------------------------------------------------------------
+class CardCtaIn(BaseModel):
+    label: Any = None
+    url: Any = None
+
+
+def _cta_rows(tid: str, t: Dict[str, Any]) -> List[Dict[str, Any]]:
+    from features import card_page as CP
+    m = t.get("card_cta") if isinstance(t.get("card_cta"), dict) else {}
+    return [{"id": s["id"], "name": s.get("name"), "is_main": s["is_main"], **CP.cta_for(t, s["id"]),
+             "is_set": isinstance(m.get(s["id"]), dict)} for s in _stores(tid)]
+
+
+@router.get("/api/admin/commerces/{tid}/card-cta")
+def get_card_cta(tid: str, token_data: TokenData = Depends(require_admin("commerces"))):
+    from features import card_page as CP
+    t = _db.tenants.find_one({"id": tid}, {"_id": 0, "card_cta": 1, "branches": 1})
+    if t is None:
+        raise HTTPException(status_code=404, detail="Commerce introuvable")
+    return {"stores": _cta_rows(tid, t), "default_label": CP.CTA_DEFAULT_LABEL,
+            "max_label": CP.CTA_MAX_LABEL, "max_url": CP.CTA_MAX_URL}
+
+
+@router.put("/api/admin/commerces/{tid}/card-cta/{store_id}")
+def set_card_cta(tid: str, store_id: str, body: CardCtaIn, token_data: TokenData = Depends(require_super())):
+    import server as core
+    from features import card_page as CP
+    t = _db.tenants.find_one({"id": tid}, {"_id": 0, "card_cta": 1, "branches": 1})
+    if t is None:
+        raise HTTPException(status_code=404, detail="Commerce introuvable")
+    if not store_id or "." in store_id or store_id.startswith("$") or store_id not in {s["id"] for s in _stores(tid)}:
+        raise HTTPException(status_code=404, detail="Établissement introuvable")
+    try:
+        row = {"label": CP.clean_cta_label(body.label), "url": CP.clean_cta_url(body.url)}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    before = (t.get("card_cta") or {}).get(store_id) if isinstance(t.get("card_cta"), dict) else None
+    if not isinstance(t.get("card_cta"), dict):
+        _db.tenants.update_one({"id": tid}, {"$set": {"card_cta": {}}})
+    _db.tenants.update_one({"id": tid}, {"$set": {f"card_cta.{store_id}": {**row, "updated_at": _now(),
+                                                                           "updated_by": token_data.email}}})
+    core.log_audit("admin.card_cta", actor=token_data.email, actor_type="user", target=tid, tenant_id=tid,
+                   meta={"store": store_id, "before": {k: (before or {}).get(k) for k in ("label", "url")} if before else None,
+                         "after": row})
+    return {"id": store_id, **row, "is_set": True}
 
 
 # ---------------------------------------------------------------------------

@@ -6,6 +6,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   activityTime, activityRow, pointsBox, tabFromSearch, searchForTab, socialLinks, TABS, rewardsHref, navActive,
+  followNetworks, ctaOf, CTA_DEFAULT_LABEL, appleAddHref,
 } from './cardPage.js';
 
 const nb = (s) => String(s).replace(/[  ]/g, ' ');
@@ -144,24 +145,27 @@ test('pointsBox: a cagnotte reads in euros', () => {
   assert.equal(b.message, '5 % de chaque achat dans votre cagnotte');
 });
 
-test('tabs from the address bar, and back', () => {
-  assert.deepEqual(TABS, ['accueil', 'carte', 'recompenses', 'compte']);
+test('tabs from the address bar, and back — no « Ma carte » any more (2026-11-25)', () => {
+  assert.deepEqual(TABS, ['accueil', 'historique', 'recompenses', 'compte']);
   assert.equal(tabFromSearch(''), 'accueil');
-  assert.equal(tabFromSearch('?onglet=carte'), 'carte');
+  assert.equal(tabFromSearch('?onglet=carte'), 'accueil', 'old « Ma carte » links land on Accueil');
+  assert.equal(tabFromSearch('?onglet=CARTE'), 'accueil');
   assert.equal(tabFromSearch('?onglet=recompenses'), 'recompenses');
   assert.equal(tabFromSearch('?onglet=programme'), 'recompenses');   // the Wallet « Programme » tile
   assert.equal(tabFromSearch('?onglet=compte'), 'compte');
   assert.equal(tabFromSearch('?onglet=historique'), 'historique');
   assert.equal(tabFromSearch('?onglet=offres'), 'accueil');
   assert.equal(tabFromSearch('?onglet=nimporte'), 'accueil');
-  assert.equal(tabFromSearch('?wallet=apple'), 'carte');             // « Ajouter à Apple Wallet » from another app
+  assert.equal(tabFromSearch('?wallet=apple'), 'accueil', '« Ajouter à Apple Wallet » from another app: the home');
   assert.equal(tabFromSearch('?wallet=apple&onglet=compte'), 'compte');
   assert.equal(tabFromSearch(undefined), 'accueil');
+  assert.equal(tabFromSearch(null), 'accueil');
 });
 
 test('searchForTab keeps the shop view, drops one-shot params', () => {
-  assert.equal(searchForTab('', 'carte'), '?onglet=carte');
-  assert.equal(searchForTab('?onglet=carte', 'accueil'), '');
+  assert.equal(searchForTab('', 'historique'), '?onglet=historique');
+  assert.equal(searchForTab('', 'carte'), '', 'no « carte » tab to write');
+  assert.equal(searchForTab('?onglet=historique', 'accueil'), '');
   assert.equal(searchForTab('?vue=commerce', 'compte'), '?vue=commerce&onglet=compte');
   assert.equal(searchForTab('?vue=commerce&onglet=compte', 'accueil'), '?vue=commerce');
   assert.equal(searchForTab('?offre=c1&notify=1&wallet=apple&k=abc&onglet=programme', 'recompenses'), '?onglet=recompenses');
@@ -183,12 +187,12 @@ test('rewardsHref: the offers page of THIS card, the shop view kept, nothing els
   assert.equal(rewardsHref(null, '?vue=commerce'), null);
 });
 
-test('navActive: which bottom item is lit — none on the hidden views', () => {
+test('navActive: which bottom item is lit — Historique is a real tab now', () => {
   assert.equal(navActive('accueil'), 'accueil');
-  assert.equal(navActive('carte'), 'carte');
+  assert.equal(navActive('historique'), 'historique');
   assert.equal(navActive('compte'), 'compte');
+  assert.equal(navActive('carte'), null, 'no « Ma carte » item');
   assert.equal(navActive('recompenses'), null, 'the programme view is not the Récompenses item (that one is a link)');
-  assert.equal(navActive('historique'), null);
   assert.equal(navActive(undefined), null);
   assert.equal(navActive('nimporte'), null);
 });
@@ -214,4 +218,63 @@ test('socialLinks: only real https links, known networks branded, order kept', (
   assert.equal(out[2].label, 'Mastodon');
   assert.equal(out[3].label, 'Site web');
   assert.equal(out[0].url, 'https://instagram.com/royaltrim');
+});
+
+// user, 2026-11-25: « Suivez-nous » always, with the 4 networks; one not added says so
+test('followNetworks: always the 4 networks, in order, url or null', () => {
+  const four = ['instagram', 'facebook', 'tiktok', 'snapchat'];
+  for (const empty of [undefined, null, [], 'x', [null, 3]]) {
+    const out = followNetworks(empty);
+    assert.deepEqual(out.map((n) => n.network), four);
+    assert.ok(out.every((n) => n.url === null), JSON.stringify(out));
+  }
+  const out = followNetworks([
+    { network: 'tiktok', url: 'https://www.tiktok.com/@royaltrim' },
+    { network: 'facebook', url: 'javascript:alert(1)' },
+    { network: 'Instagram', url: 'https://www.instagram.com/royaltrim' },
+    { network: 'youtube', url: 'https://youtube.com/@x' },
+    { network: 'instagram', url: 'https://www.instagram.com/second' },
+  ]);
+  assert.deepEqual(out.map((n) => n.network), four, 'the same 4, never more');
+  assert.deepEqual(out.map((n) => n.label), ['Instagram', 'Facebook', 'TikTok', 'Snapchat']);
+  assert.equal(out[0].url, 'https://www.instagram.com/royaltrim', 'the first one of a network wins');
+  assert.equal(out[1].url, null, 'a javascript: link is not a link');
+  assert.equal(out[2].url, 'https://www.tiktok.com/@royaltrim');
+  assert.equal(out[3].url, null);
+});
+
+test('ctaOf: the store\'s button, default « Prendre rendez-vous », https only', () => {
+  assert.equal(CTA_DEFAULT_LABEL, 'Prendre rendez-vous');
+  for (const c of [undefined, null, {}, { cta: null }, { cta: 'x' }, { cta: [] }]) {
+    assert.deepEqual(ctaOf(c), { label: 'Prendre rendez-vous', url: null });
+  }
+  assert.deepEqual(ctaOf({ cta: { label: '  Commander  ', url: 'https://www.ubereats.com/fr/store/x' } }),
+    { label: 'Commander', url: 'https://www.ubereats.com/fr/store/x' });
+  assert.deepEqual(ctaOf({ cta: { label: '', url: null } }), { label: 'Prendre rendez-vous', url: null });
+  assert.equal(ctaOf({ cta: { label: 'x'.repeat(29) } }).label, 'Prendre rendez-vous', 'too long: the default');
+  assert.equal(ctaOf({ cta: { label: 'x'.repeat(28) } }).label, 'x'.repeat(28), '28 is the limit');
+  assert.equal(ctaOf({ cta: { label: 42 } }).label, 'Prendre rendez-vous');
+  for (const bad of ['javascript:alert(1)', 'JAVASCRIPT:alert(1)', 'data:text/html,<b>x', 'http://planity.com/x',
+    '//evil.com', 'https://', 'https://a b.com', ' https://ok.com/x y', 'https://user:pw@evil.com', 'https://a.com\\@b.com',
+    'https://' + 'a'.repeat(500) + '.com', 'vbscript:x', 42, '', null]) {
+    assert.equal(ctaOf({ cta: { label: 'Voir', url: bad } }).url, null, String(bad));
+  }
+  assert.equal(ctaOf({ cta: { label: 'Voir', url: ' https://www.planity.com/royal-trim ' } }).url, 'https://www.planity.com/royal-trim');
+});
+
+// « Ajouter à Apple Wallet » from another app lands here (?wallet=apple, in
+// Safari): the page starts the same add the old « Ma carte » button did
+test('appleAddHref: the pass link for a ?wallet=apple arrival in Safari only', () => {
+  const base = { search: '?wallet=apple', barcodeId: 'FT-AB12CD34', key: 'kk', place: 'safari', appleOn: true };
+  assert.equal(appleAddHref(base), '/api/card/FT-AB12CD34/apple-wallet.pkpass?k=kk');
+  assert.equal(appleAddHref({ ...base, key: '' }), '/api/card/FT-AB12CD34/apple-wallet.pkpass');
+  assert.equal(appleAddHref({ ...base, key: 'a&b=c' }), '/api/card/FT-AB12CD34/apple-wallet.pkpass?k=a%26b%3Dc');
+  assert.equal(appleAddHref({ ...base, search: '' }), null, 'no ?wallet=apple: nothing');
+  assert.equal(appleAddHref({ ...base, search: '?wallet=google' }), null);
+  assert.equal(appleAddHref({ ...base, place: 'other' }), null, 'Instagram / Chrome would download a file');
+  assert.equal(appleAddHref({ ...base, place: 'none' }), null, 'Android / computers: nothing');
+  assert.equal(appleAddHref({ ...base, appleOn: false }), null, 'Apple Wallet not on for this card');
+  assert.equal(appleAddHref({ ...base, barcodeId: '' }), null);
+  assert.equal(appleAddHref({ ...base, barcodeId: 'FT/../x' }), '/api/card/FT%2F..%2Fx/apple-wallet.pkpass?k=kk');
+  assert.equal(appleAddHref({}), null);
 });

@@ -1,9 +1,12 @@
 /**
  * « Ma carte en ligne » redesign (user, 2026-11-25; mockup « Carte en ligne
- * claire »): the card's own photo on top with « Bonjour, <prénom> ! », the
- * points box in the programme's words, three tiles, the last activities,
- * « Suivez-nous » with the shop's networks, and four bottom tabs that carry
- * everything the old page had. Colours come from the card itself.
+ * claire »): the card's own photo — the shop's name on top, « Bonjour,
+ * <prénom> ! » at its bottom just above the points box —, the points box in
+ * the programme's words, three tiles (the 3rd one the store's button, set by
+ * the super admin), the last activities, « Suivez-nous » always with the 4
+ * networks, and the bottom bar Accueil · Historique · Récompenses · Mon
+ * compte. No « Ma carte » anywhere (user, 2026-11-25). Colours come from the
+ * card itself.
  *
  * The card's answer is reshaped in the browser (photo, networks, activity) —
  * the demo shop is left alone. Local server and demo data only.
@@ -86,7 +89,8 @@ test('a points card: photo, greeting, the programme\'s words, activities, networ
     card: { programme: 'points_euro', programme_kind: 'points_euro', points_mode: 'per_euro', points_per_euro: 10,
       reward_points: 1000, reward_description: 'Café offert', brand_color: '#1450B8', accent_color: '#F8B008',
       hero_photo_url: HERO, logo_url: LOGO, tagline: 'Votre fidélité, notre priorité',
-      socials: [{ network: 'instagram', url: 'https://instagram.com/fidclic' }, { network: 'tiktok', url: 'https://www.tiktok.com/@fidclic' }] },
+      socials: [{ network: 'instagram', url: 'https://instagram.com/fidclic' }, { network: 'tiktok', url: 'https://www.tiktok.com/@fidclic' }],
+      cta: { label: 'Prendre rendez-vous', url: 'https://www.planity.com/fidclic-tours' } },
     customer: { first_name: 'Thomas', points: 650 },
     // the home asks for 3; Historique asks for a page, then the next one (`before`)
     activity: (q) => {
@@ -120,15 +124,19 @@ test('a points card: photo, greeting, the programme\'s words, activities, networ
   await expect(hero.getByRole('button', { name: 'Mon compte' })).toHaveCount(0);
   await expect(hero.locator('.round')).toHaveCount(0);
   const heroBox = await hero.boundingBox();
-  // « Bonjour, Thomas ! » right under the header, in the photo's top half
+  // the shop's name at the TOP of the photo; « Bonjour, Thomas ! » at its BOTTOM,
+  // just above the points box (as in PR #519 — user, 2026-11-25)
   const hello = await page.getByRole('heading', { name: 'Bonjour, Thomas !' }).boundingBox();
   const head = await hero.locator('header').boundingBox();
-  expect(hello.y, 'greeting below the header').toBeGreaterThanOrEqual(head.y + head.height - 1);
-  expect(hello.y + hello.height / 2, 'greeting above the photo\'s middle').toBeLessThan(heroBox.y + heroBox.height / 2);
+  expect(head.y + head.height / 2, 'shop name in the photo\'s top half').toBeLessThan(heroBox.y + heroBox.height / 2);
+  expect(hello.y + hello.height / 2, 'greeting in the photo\'s bottom half').toBeGreaterThan(heroBox.y + heroBox.height / 2);
   expect(heroBox.height, 'hero about the mockup\'s height').toBeGreaterThan(290);
   expect(heroBox.height).toBeLessThan(400);
 
   const box = page.getByTestId('points-box');
+  const boxTop0 = (await box.boundingBox()).y;
+  expect(hello.y + hello.height, 'greeting above the points box').toBeLessThanOrEqual(boxTop0 + 1);
+  expect(boxTop0 - (hello.y + hello.height), 'greeting just above the box').toBeLessThan(40);
   await expect(box).toContainText('Mes points fidélité');
   await expect(box).toContainText('650');
   await expect(box).toContainText('Plus que 350 points pour obtenir votre récompense !');
@@ -138,6 +146,13 @@ test('a points card: photo, greeting, the programme\'s words, activities, networ
 
   await expect(page.getByRole('link', { name: /Mes offres exclusives/ })).toHaveAttribute('href', `/card/${bc}/offres`);
   await expect(page.getByRole('link', { name: /Parrainer un proche/ })).toHaveAttribute('href', `/card/${bc}/partager`);
+  // the 3rd tile: the store's button (super admin), opened in a new tab
+  const cta = page.getByTestId('card-cta');
+  await expect(cta).toHaveText(/Prendre rendez-vous/);
+  await expect(cta).toHaveAttribute('href', 'https://www.planity.com/fidclic-tours');
+  await expect(cta).toHaveAttribute('target', '_blank');
+  await expect(cta).toHaveAttribute('rel', 'noopener noreferrer');
+  await expect(page.locator('.tiles').getByText('Historique')).toHaveCount(0);
 
   const acts = page.getByTestId('activity-list');
   await expect(acts.getByRole('listitem')).toHaveCount(3);
@@ -159,7 +174,16 @@ test('a points card: photo, greeting, the programme\'s words, activities, networ
     await expect(a).toHaveAttribute('target', '_blank');
     await expect(a).toHaveAttribute('rel', 'noopener noreferrer');
   }
-  await expect(follow.getByRole('link', { name: 'Snapchat' })).toHaveCount(0);
+  // the 4 networks always; one not added yet says so, calmly, then goes away
+  await expect(follow.locator('.so > *')).toHaveCount(4);
+  for (const name of ['Facebook', 'Snapchat']) {
+    await expect(follow.getByRole('link', { name })).toHaveCount(0);
+    await follow.getByRole('button', { name }).click();
+    const say = page.getByRole('status').filter({ hasText: 'Lien pas encore ajouté' });
+    await expect(say).toBeVisible();
+    await expect(say).toHaveAttribute('aria-live', 'polite');
+    await expect(say).toBeHidden({ timeout: 6000 });
+  }
 
   // its own colours: FidClic blue button, dark-blue fade under the photo, a pale blue page
   expect((await cssVar(page, '--btn')).toLowerCase()).toBe('#1450b8');
@@ -183,14 +207,15 @@ test('a points card: photo, greeting, the programme\'s words, activities, networ
   await expect(all).toContainText('Bienvenue');
   await expect(all).toContainText('parrainé par Max');
   await expect(page.getByRole('button', { name: 'Voir plus' })).toHaveCount(0);
+  await expect(page.getByRole('tab', { name: 'Historique' }), 'a real tab now, lit').toHaveAttribute('aria-selected', 'true');
   await page.goBack();
   await expect(page.getByRole('heading', { name: 'Bonjour, Thomas !' })).toBeVisible();
-  // the Historique tile opens the same list
-  await page.getByRole('button', { name: 'Historique' }).click();
+  // the bottom Historique opens the same list
+  await page.getByRole('tab', { name: 'Historique' }).click();
   await expect(page.getByTestId('history-list')).toBeVisible();
 });
 
-test('a tampons card on a black + gold card: no photo, no networks, calm empty history', async ({ page, request }) => {
+test('a tampons card on a black + gold card: no photo, no networks added, no button link, calm empty history', async ({ page, request }) => {
   const made = await newCard(request, 'Inès Tampons');
   const bc = made.barcode_id;
   await stage(page, bc, {
@@ -215,8 +240,20 @@ test('a tampons card on a black + gold card: no photo, no networks, calm empty h
 
   await expect(page.getByTestId('activity-empty')).toBeVisible();
   await expect(page.getByTestId('activity-list').getByRole('listitem')).toHaveCount(0);
-  await expect(page.getByTestId('follow-us')).toHaveCount(0);
-  await expect(page.getByText('Suivez-nous')).toHaveCount(0);
+  // « Suivez-nous » is always there: the 4 networks, none added — they say so
+  const follow = page.getByTestId('follow-us');
+  await expect(follow.getByRole('heading', { name: 'Suivez-nous' })).toBeVisible();
+  await expect(follow.getByRole('link')).toHaveCount(0);
+  for (const name of ['Instagram', 'Facebook', 'TikTok', 'Snapchat']) await expect(follow.getByRole('button', { name })).toBeVisible();
+  await follow.getByRole('button', { name: /Nous rejoindre/ }).click();
+  await expect(page.getByRole('status').filter({ hasText: 'Lien pas encore ajouté' })).toBeVisible();
+  // the store's button: default name, no link yet → the same calm message
+  const cta = page.getByTestId('card-cta');
+  await expect(cta).toHaveText(/Prendre rendez-vous/);
+  await expect(cta).not.toHaveAttribute('href', /./);
+  await page.waitForTimeout(3000);
+  await cta.click();
+  await expect(page.getByRole('status').filter({ hasText: 'Lien pas encore ajouté' })).toBeVisible();
 
   // its own colours: a black button with gold ink, a warm page, a near-black fade
   const btn = (await cssVar(page, '--btn')).toLowerCase();
@@ -231,7 +268,7 @@ test('a tampons card on a black + gold card: no photo, no networks, calm empty h
   await shots(page, 'card-online-stamps-390');
 });
 
-test('every feature of the old page lives in a tab; tabs are in the address bar', async ({ page, request }) => {
+test('no « Ma carte » anywhere; the bottom bar is Accueil · Historique · Récompenses · Mon compte', async ({ page, request }) => {
   const made = await newCard(request, 'Onglets Test');
   const bc = made.barcode_id;
   await stage(page, bc, {
@@ -251,18 +288,31 @@ test('every feature of the old page lives in a tab; tabs are in the address bar'
   await expect(page.getByText('Vous avez raté 2 offres')).toBeVisible();
   await expect(page.getByText('Un message de la boutique')).toBeVisible();
 
-  // Ma carte: the pass, the Wallet buttons' row, share / home screen / print
-  await page.getByRole('button', { name: 'Ma carte', exact: true }).click();   // the box's « Ma carte »
-  await expect(page).toHaveURL(/onglet=carte/);
-  await expect(tab('Ma carte')).toHaveAttribute('aria-selected', 'true');
-  await expect(page.getByTestId('wallet-pass-preview')).toContainText('Encore 75 points · Un dessert offert');
-  for (const name of [/Partager \/ copier/, /écran d’accueil/, /Imprimer/]) await expect(page.getByRole('button', { name })).toBeVisible();
-  await shots(page, 'card-online-tab-carte');
+  // the bottom bar: exactly these four, in this order
+  const nav = page.getByRole('navigation', { name: 'Ma carte en ligne' });
+  await expect(nav.locator('[role="tablist"] > *')).toHaveText(['Accueil', 'Historique', 'Récompenses', 'Mon compte']);
+  // « Ma carte » is gone: no tab, no button in the points box, no pass, no Wallet buttons, no share row
+  const noMaCarte = async () => {
+    await expect(page.getByText('Ma carte', { exact: true })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: /^Ma carte/ })).toHaveCount(0);
+    await expect(page.getByRole('tab', { name: 'Ma carte' })).toHaveCount(0);
+    await expect(page.getByTestId('wallet-pass-preview')).toHaveCount(0);
+    await expect(page.getByText(/Ajouter à (Apple|Google|Samsung) Wallet/)).toHaveCount(0);
+    for (const name of [/Partager \/ copier/, /écran d’accueil/, /Imprimer/]) await expect(page.getByRole('button', { name })).toHaveCount(0);
+  };
+  await noMaCarte();
+
+  // Historique: a real tab, lit, in the address bar
+  await tab('Historique').click();
+  await expect(page).toHaveURL(/onglet=historique/);
+  await expect(tab('Historique')).toHaveAttribute('aria-selected', 'true');
+  await expect(page.getByTestId('history-list')).toBeAttached();
+  await noMaCarte();
   expect(await noSideScroll(page)).toBeLessThanOrEqual(0);
 
-  // Récompenses is a link to « Vos offres » now (user, 2026-11-25) — not a tab
+  // Récompenses is a link to « Vos offres » (user, 2026-11-25) — not a tab
   await expect(page.getByRole('tab', { name: 'Récompenses' })).toHaveCount(0);
-  await expect(page.getByRole('link', { name: 'Récompenses' })).toHaveAttribute('href', `/card/${bc}/offres`);
+  await expect(nav.getByRole('link', { name: 'Récompenses' })).toHaveAttribute('href', `/card/${bc}/offres`);
 
   // Mon compte: paramètres, avis, à propos, RGPD
   await tab('Mon compte').click();
@@ -273,14 +323,46 @@ test('every feature of the old page lives in a tab; tabs are in the address bar'
   }
   await expect(page.getByRole('heading', { name: /À propos de/ })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Envoyer mon avis' })).toBeVisible();
+  await noMaCarte();
   await shots(page, 'card-online-tab-compte');
   expect(await noSideScroll(page)).toBeLessThanOrEqual(0);
 
   // the back button walks the tabs back
   await page.goBack();
-  await expect(tab('Ma carte')).toHaveAttribute('aria-selected', 'true');
+  await expect(tab('Historique')).toHaveAttribute('aria-selected', 'true');
   await page.goBack();
   await expect(tab('Accueil')).toHaveAttribute('aria-selected', 'true');
+
+  // an old « Ma carte » link (?onglet=carte) lands on Accueil
+  await page.goto(`/card/${bc}?onglet=carte`);
+  await expect(tab('Accueil')).toHaveAttribute('aria-selected', 'true');
+  await expect(page.getByRole('heading', { name: 'Bonjour, Onglets !' })).toBeVisible();
+  await noMaCarte();
+});
+
+test('the store\'s button and the networks render text, never markup', async ({ page, request }) => {
+  const made = await newCard(request, 'Xss Test');
+  const bc = made.barcode_id;
+  const dialogs = [];
+  page.on('dialog', (d) => { dialogs.push(d.message()); d.dismiss(); });
+  await stage(page, bc, {
+    card: { cta: { label: '<img src=x onerror=alert(1)>', url: 'javascript:alert(2)' },
+      socials: [{ network: 'instagram', url: 'javascript:alert(3)' }, { network: 'facebook', url: 'https://www.facebook.com/ok' }] },
+    customer: { first_name: '<b>Eve</b>' },
+  });
+  await page.goto(`/card/${bc}?k=${made.card_key}`);
+  const cta = page.getByTestId('card-cta');
+  await expect(cta).toHaveText('<img src=x onerror=alert(1)>');
+  await expect(page.locator('.tiles img')).toHaveCount(0);
+  await expect(cta, 'a javascript: link is no link').not.toHaveAttribute('href', /./);
+  await cta.click();
+  await expect(page.getByRole('status').filter({ hasText: 'Lien pas encore ajouté' })).toBeVisible();
+  const follow = page.getByTestId('follow-us');
+  await expect(follow.getByRole('button', { name: 'Instagram' })).toBeVisible();
+  await expect(follow.getByRole('link', { name: /Nous rejoindre/ })).toHaveAttribute('href', 'https://www.facebook.com/ok');
+  await expect(page.locator('a[href^="javascript"]')).toHaveCount(0);
+  await page.waitForTimeout(300);
+  expect(dialogs).toEqual([]);
 });
 
 test('the bottom « Récompenses » opens « Vos offres » of this card, and « Voir ma carte » comes back', async ({ page, request }) => {

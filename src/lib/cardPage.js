@@ -8,6 +8,9 @@
  *   pointsBox     the points / tampons / cagnotte box under the photo
  *   tabFromSearch / searchForTab   the bottom tabs in the address bar
  *   socialLinks   the shop's networks for « Suivez-nous »
+ *   followNetworks  the 4 networks « Suivez-nous » always shows, url or null
+ *   ctaOf         the store's button (3rd home tile), set by the super admin
+ *   appleAddHref  ?wallet=apple from another app: the pass to open in Safari
  *
  * Run the tests: node --test src/lib/cardPage.test.js
  */
@@ -135,8 +138,11 @@ export function pointsBox(card = {}, customer = {}) {
 
 // ---------------------------------------------------------------- tabs in the URL
 
-export const TABS = ['accueil', 'carte', 'recompenses', 'compte'];
-const VIEWS = [...TABS, 'historique'];
+// The bottom bar (user, 2026-11-25): Accueil · Historique · Récompenses (a
+// link) · Mon compte. « Ma carte » is gone: an old ?onglet=carte link, and a
+// ?wallet=apple arrival, land on Accueil.
+export const TABS = ['accueil', 'historique', 'recompenses', 'compte'];
+const VIEWS = TABS;
 const ONE_SHOT = ['offre', 'notify', 'wallet', 'k'];
 
 /** The tab the address bar asks for. « programme » (the Wallet tile) is Récompenses. */
@@ -145,7 +151,6 @@ export function tabFromSearch(search) {
   const o = (q.get('onglet') || '').toLowerCase();
   if (o === 'programme') return 'recompenses';
   if (VIEWS.includes(o)) return o;
-  if (!o && q.get('wallet') === 'apple') return 'carte';
   return 'accueil';
 }
 
@@ -171,9 +176,9 @@ export function rewardsHref(barcodeId, search) {
   return `/card/${encodeURIComponent(bc)}/offres${q.get('vue') === 'commerce' ? '?vue=commerce' : ''}`;
 }
 
-const IN_PAGE_TABS = ['accueil', 'carte', 'compte'];
+const IN_PAGE_TABS = ['accueil', 'historique', 'compte'];
 
-/** The bottom item lit for `tab` — none on the hidden views (programme, historique). */
+/** The bottom item lit for `tab` — none on the hidden programme view. */
 export function navActive(tab) {
   return IN_PAGE_TABS.includes(tab) ? tab : null;
 }
@@ -199,6 +204,58 @@ export function socialLinks(socials) {
     out.push({ network: network === 'twitter' ? 'x' : network, label, url });
   }
   return out;
+}
+
+const FOLLOW = [['instagram', 'Instagram'], ['facebook', 'Facebook'], ['tiktok', 'TikTok'], ['snapchat', 'Snapchat']];
+
+/**
+ * « Suivez-nous » always shows these 4 (user, 2026-11-25), in this order:
+ * [{ network, label, url }] — url the shop's https link, or null when not
+ * added yet (the page then says « Lien pas encore ajouté »).
+ */
+export function followNetworks(socials) {
+  const links = socialLinks(socials);
+  return FOLLOW.map(([network, label]) => ({ network, label, url: links.find((l) => l.network === network)?.url || null }));
+}
+
+// ---------------------------------------------------------------- the store's button
+
+export const CTA_DEFAULT_LABEL = 'Prendre rendez-vous';
+const CTA_MAX_LABEL = 28;
+const CTA_MAX_URL = 500;
+const CTA_URL = /^https:\/\/[a-z0-9.-]+\.[a-z]{2,24}(?:[/?#][!-~]*)?$/i;
+
+/**
+ * The home's 3rd tile: { label, url } of the card's own store (card.cta,
+ * set by the FidClic super admin per établissement). The server already
+ * checks both; this is the page's own guard — the default name, and no link
+ * unless it is a plain https:// one (no login part, no space, ≤ 500).
+ */
+export function ctaOf(card) {
+  const c = card && typeof card === 'object' && card.cta && typeof card.cta === 'object' && !Array.isArray(card.cta) ? card.cta : {};
+  const raw = typeof c.label === 'string' ? c.label.trim() : '';
+  const label = raw && raw.length <= CTA_MAX_LABEL && !/[\u0000-\u001f\u007f]/.test(raw) ? raw : CTA_DEFAULT_LABEL;
+  const u = typeof c.url === 'string' ? c.url.trim() : '';
+  const ok = u.length <= CTA_MAX_URL && CTA_URL.test(u) && !u.slice(8).split(/[/?#]/)[0].includes('@') && !u.includes('\\');
+  return { label, url: ok ? u : null };
+}
+
+// ---------------------------------------------------------------- Apple Wallet from another app
+
+/**
+ * « Ajouter à Apple Wallet » tapped in another app opens this card in Safari
+ * with ?wallet=apple (components/WalletButtons). The « Ma carte » tab and its
+ * button are gone (user, 2026-11-25), so the page itself opens the pass —
+ * the very link that button was. Only in Safari on an iPhone (`place`
+ * 'safari', lib/iosSafari) and only when Apple Wallet is on for the card:
+ * anywhere else the file would just download. null: nothing to do.
+ */
+export function appleAddHref({ search, barcodeId, key, place, appleOn } = {}) {
+  const q = new URLSearchParams(typeof search === 'string' ? search : '');
+  if (q.get('wallet') !== 'apple' || place !== 'safari' || appleOn !== true) return null;
+  const bc = typeof barcodeId === 'string' ? barcodeId.trim() : '';
+  if (!bc) return null;
+  return `/api/card/${encodeURIComponent(bc)}/apple-wallet.pkpass${key ? `?k=${encodeURIComponent(key)}` : ''}`;
 }
 
 /** « Donner mon avis » opens for this many days after the client's last visit. */

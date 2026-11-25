@@ -5,7 +5,7 @@ import {
   Users, UserCheck, UserX, Store, Target, Gift, RefreshCcw, ExternalLink, Mail, Pencil, MoreHorizontal, LayoutDashboard,
   Heart, Megaphone, Bell, Gauge, CreditCard, Settings, TrendingUp, PieChart as PieIcon, MapPinned, Award, Star, Crown,
   AlertTriangle, Send, Eye, MousePointerClick, ArrowRight, CalendarDays, BadgeCheck, Receipt, PauseCircle, PlayCircle,
-  Building2, Search, Loader2, Repeat, Clock, Ban, Undo2, FlaskConical, Power, Trash2,
+  Building2, Search, Loader2, Repeat, Clock, Ban, Undo2, FlaskConical, Power, Trash2, CalendarCheck,
 } from 'lucide-react';
 import { adminAPI } from '../../lib/api';
 import { downloadLabExport } from '../../lib/labExport';
@@ -165,6 +165,7 @@ export default function CommerceDetailPage() {
       {tab === 'utilisation' && <UsageCard d={d} big />}
       {tab === 'abonnement' && x && <AbonnementTab d={d} a={x.abonnement} setModal={setModal} />}
       {tab === 'parametres' && x && <ParametresTab p={x.parametres} />}
+      {tab === 'parametres' && <CardCtaSection id={id} boss={boss} current={store} />}
       {tab === 'services' && <ServicesTab id={id} name={d.name} say={say} />}
 
       {toast}
@@ -598,6 +599,74 @@ function ParametresTab({ p }) {
             <p className="text-[11.5px] text-[#94A3B8]">{u.email}{u.two_fa ? ' · 2FA' : ''}{!u.active ? ' · désactivé' : ''}</p></li>))}</ul>
       </Card>
     </div>
+  );
+}
+
+/* « Bouton de la carte client » (user, 2026-11-25): the 3rd tile of each
+   client's card page — « Prendre rendez-vous » by default. Its name and link
+   are set here only, by the super admin, store by store; a shop without
+   bookings types any name (« Commander », « Voir le menu »). No link: the
+   client reads « Lien pas encore ajouté ». */
+function CardCtaSection({ id, boss, current }) {
+  const [rows, setRows] = useState(null);
+  const [err, setErr] = useState('');
+  useEffect(() => {
+    adminAPI.commerceCardCta(id).then(({ data }) => { protectNames((data?.stores || []).map((s) => s.name)); setRows(data); })
+      .catch((e) => setErr(e?.response?.data?.detail || 'Boutons illisibles.'));
+  }, [id]);
+  if (err) return <Card className="mt-4"><p className="text-[13px] text-[#C0392B]">{err}</p></Card>;
+  if (!rows) return <div className="mt-4"><Loading /></div>;
+  return (
+    <section data-testid="card-cta-section" className="mt-4">
+      <Card>
+        <Head icon={CalendarCheck} title="Bouton de la carte client"
+              sub="Le 3e bouton de l'accueil de la carte en ligne, pour chaque boutique. Sans lien, le client lit « Lien pas encore ajouté »." />
+        {!boss && <p className="mb-3 rounded-xl bg-[#F4F7FC] px-3 py-2 text-[12.5px] text-[#475569]">Réservé au Super Admin : vous pouvez le voir, pas le modifier.</p>}
+        <ul className="divide-y divide-[#EDF1F7]">
+          {rows.stores.map((s) => <CardCtaRow key={s.id} id={id} s={s} boss={boss} max={rows} current={current === s.id} />)}
+        </ul>
+      </Card>
+    </section>
+  );
+}
+
+function CardCtaRow({ id, s, boss, max, current }) {
+  const [label, setLabel] = useState(s.label || max.default_label);
+  const [url, setUrl] = useState(s.url || '');
+  const [state, setState] = useState({ busy: false, err: '', ok: false });
+  const [saved, setSaved] = useState({ is_set: s.is_set, url: s.url });
+  const save = async () => {
+    setState({ busy: true, err: '', ok: false });
+    try {
+      const { data } = await adminAPI.setCommerceCardCta(id, s.id, { label, url });
+      setLabel(data.label); setUrl(data.url || ''); setSaved({ is_set: true, url: data.url });
+      setState({ busy: false, err: '', ok: true });
+    } catch (e) {
+      const d = e?.response?.data?.detail;
+      setState({ busy: false, err: typeof d === 'string' ? d : 'Enregistrement impossible.', ok: false });
+    }
+  };
+  const lid = `cta-label-${s.id}`;
+  const uid = `cta-url-${s.id}`;
+  return (
+    <li data-store={s.id} className={`grid gap-3 py-3 lg:grid-cols-[minmax(160px,1fr)_minmax(180px,1.2fr)_minmax(220px,2fr)_210px] lg:items-end ${current ? 'bg-[#F4F8FF]' : ''}`}>
+      <p className="text-[13.5px] font-medium text-[#0B1C3F]"><span translate="no">{s.name}</span>{s.is_main ? <span className="font-normal text-[#64748B]"> · principale</span> : null}
+        <span className="block text-[11.5px] font-normal text-[#94A3B8]">{!saved.is_set ? 'Par défaut, sans lien' : saved.url ? 'Lien enregistré' : 'Sans lien'}</span></p>
+      <label htmlFor={lid} className="block"><span className="mb-1 block text-[11.5px] text-[#64748B]">Nom du bouton</span>
+        <input id={lid} className={inputCls} value={label} maxLength={max.max_label} disabled={!boss}
+               onChange={(e) => { setLabel(e.target.value); setState((x) => ({ ...x, ok: false })); }} /></label>
+      <label htmlFor={uid} className="block"><span className="mb-1 block text-[11.5px] text-[#64748B]">Lien</span>
+        <input id={uid} className={inputCls} value={url} maxLength={max.max_url} disabled={!boss} inputMode="url" autoComplete="off" spellCheck={false}
+               placeholder="https://www.planity.com/…" onChange={(e) => { setUrl(e.target.value); setState((x) => ({ ...x, ok: false })); }} /></label>
+      <div className="flex items-center gap-2">
+        <button type="button" onClick={save} disabled={!boss || state.busy || !label.trim()}
+                className="h-10 rounded-lg px-4 text-[13.5px] font-semibold text-white disabled:opacity-50" style={{ background: BLUE }}>
+          {state.busy ? <Loader2 size={15} className="animate-spin" /> : 'Enregistrer'}
+        </button>
+        {state.ok && <span role="status" className="text-[12.5px] font-medium text-[#0F8B58]">Enregistré</span>}
+      </div>
+      {state.err && <p role="alert" className="text-[12.5px] text-[#C0392B] lg:col-span-4">{state.err}</p>}
+    </li>
   );
 }
 

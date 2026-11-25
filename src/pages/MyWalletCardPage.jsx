@@ -2,45 +2,52 @@ import { vh } from '../lib/fit';
 import React, { useEffect, useRef, useState } from 'react';
 import { useParams, Link, useNavigate, useLocation } from 'react-router-dom';
 import { readMine, addMine, forgetMine, keyOf } from '../lib/myCards';
-import { Bell, RefreshCw, Trash2, CheckCircle2, XCircle, Clock, X, Download, ShieldCheck, Star, Settings, Share2, Smartphone, Printer, MapPin, Phone, Globe, Store, ChevronLeft, Flame, Gift } from 'lucide-react';
+import { Bell, RefreshCw, Trash2, CheckCircle2, XCircle, Clock, X, Download, ShieldCheck, Star, Settings, MapPin, Phone, Globe, Store, ChevronLeft, Flame, Gift } from 'lucide-react';
 import api, { publicAPI } from '../lib/api';
 import { ensureSubscribed, unsubscribe as unsubscribePush, isSupported as isPushSupported } from '../lib/webpush';
-import InstallPwaPrompt from '../components/InstallPwaPrompt';
-import GeoConsentCard from '../components/GeoConsentCard';
-import WalletPassPreview from '../components/WalletPassPreview';
 import { programmeOf, earningRule, balanceText } from '../lib/programme';
-import WalletButtons from '../components/WalletButtons';
+import { here as walletPlace } from '../lib/iosSafari';
+import { waitForAppleAdd } from '../lib/walletOpen';
 import { cycleVisits, rewardsPending } from '../lib/cardCycle';
 import { protectNames } from '../lib/translator';
 import { liveOffers } from '../lib/cardOffers';
 import { themeFromCard, themeVars } from '../lib/cardTheme';
 import { photoPalette } from '../lib/photoPalette';
-import { activityTime, activityRow, pointsBox, tabFromSearch, searchForTab, socialLinks, rewardsHref, navActive, reviewOpen } from '../lib/cardPage';
+import { activityTime, activityRow, pointsBox, tabFromSearch, searchForTab, followNetworks, ctaOf, appleAddHref, rewardsHref, navActive, reviewOpen } from '../lib/cardPage';
 import './MyWalletCardPage.css';
 
 /*
  * « Ma carte en ligne » — the customer's card page (/card/:barcodeId, the
  * Wallet pass's « Ma carte en ligne » link). Photo/tabs redesign 2026-11-25
- * (mockup « Carte en ligne claire »): the card's own photo with « Bonjour,
- * <prénom> ! », the points box in the programme's words, three tiles, the last
- * activities, « Suivez-nous », and four bottom tabs that carry everything the
- * previous page had (MyWalletCardPagePrev.jsx, unrouted, for a rollback):
+ * (mockup « Carte en ligne claire »): the card's own photo, the points box in
+ * the programme's words, three tiles, the last activities, « Suivez-nous »,
+ * and the bottom bar (MyWalletCardPagePrev.jsx, unrouted, for a rollback):
  *
  *   Accueil      the mockup + the missed-offers banner + the automation message
- *   Ma carte     the Wallet pass, Apple / Google / Samsung, share · home screen ·
- *                print, the PWA install prompt, the geolocation consent
+ *   Historique   every activity, page by page (also « Voir tout »)
  *   Récompenses  a LINK to « Vos offres » (/card/{bc}/offres, CardOffersPage —
  *                user, 2026-11-25), not an in-page tab
  *   Mon compte   paramètres, avis, à propos, RGPD, delete the card
  *
- * Tabs live in the address bar (?onglet=carte|compte|historique) so the back
- * button walks them. Hidden views, no bottom item lit: ?onglet=historique and
- * ?onglet=programme / ?onglet=recompenses — « Le programme », the reward
- * waiting at the till, the défis (the Wallet « Avantages membres » tile).
+ * « Ma carte » is gone everywhere (user, 2026-11-25): no tab, no button in the
+ * points box, no pass preview, no Wallet buttons, no share / home screen /
+ * print row, no PWA prompt, no geolocation card on this page (they stay on
+ * the signup's « Félicitations »). An old ?onglet=carte link opens Accueil;
+ * a ?wallet=apple arrival (« Ajouter à Apple Wallet » tapped in another app,
+ * opened in Safari) starts that add itself — see appleAddHref.
+ *
+ * Tabs live in the address bar (?onglet=historique|compte) so the back
+ * button walks them. Hidden view, no bottom item lit: ?onglet=programme /
+ * ?onglet=recompenses — « Le programme », the reward waiting at the till,
+ * the défis (the Wallet « Avantages membres » tile).
  * Colours come from the card itself, else from its photo (lib/cardTheme
  * themeFromCard + lib/photoPalette), words from lib/cardPage.
- * Header (2026-11-25): logo + shop name + tagline only — no bell, no account
- * button; « Bonjour » right under it, the photo fills the hero (cover).
+ * Hero (2026-11-25): logo + shop name + tagline at the TOP of the photo, no
+ * bell, no account button; « Bonjour, <prénom> ! » at its BOTTOM, just above
+ * the points box; the photo fills the hero (cover).
+ * Home tiles: offers · parrainer · the store's button (card.cta, set by the
+ * FidClic super admin per établissement — « Prendre rendez-vous » by default).
+ * A network or a button with no link says « Lien pas encore ajouté ».
  */
 
 const FONT_ID = 'wcp-font-jakarta';
@@ -59,12 +66,12 @@ const I = {
   stamp: (s = 23) => <Svg size={s}><circle cx="12" cy="12" r="8.5" /><path d="m8.5 12.2 2.4 2.4 4.6-5" /></Svg>,
   ticket: <Svg><path d="M3 8a2 2 0 0 0 2-2h14a2 2 0 0 0 2 2v2a2 2 0 0 0 0 4v2a2 2 0 0 0-2 2H5a2 2 0 0 0-2-2v-2a2 2 0 0 0 0-4z" /><path d="m9.5 14.5 5-5" /><circle cx="9.7" cy="9.7" r=".7" fill="currentColor" /><circle cx="14.3" cy="14.3" r=".7" fill="currentColor" /></Svg>,
   people: <Svg><circle cx="9" cy="8" r="3.2" /><path d="M3 19c.8-3 3.2-5 6-5s5.2 2 6 5" /><circle cx="17" cy="9" r="2.4" /><path d="M16.5 14c2.3 0 4 1.6 4.5 4" /></Svg>,
-  clock: <Svg><circle cx="12" cy="13" r="8" /><path d="M12 9v4l2.5 2M9 2h6" /></Svg>,
   pulse: <Svg size={19} sw={2.2}><path d="M2 12h4l3-7 5 14 3-7h5" /></Svg>,
   db: <Svg size={19}><ellipse cx="12" cy="6" rx="7" ry="3" /><path d="M5 6v6c0 1.7 3.1 3 7 3s7-1.3 7-3V6M5 12v6c0 1.7 3.1 3 7 3s7-1.3 7-3v-6" /></Svg>,
   gift: (s) => <Svg size={s}><rect x="4" y="10" width="16" height="10" rx="1.5" /><rect x="3" y="7" width="18" height="4" rx="1.5" /><path d="M12 7v13M12 7c-1.5-3.5-6-4-5.5-1.3C6.8 7 12 7 12 7zM12 7c1.5-3.5 6-4 5.5-1.3C17.2 7 12 7 12 7z" /></Svg>,
   home: <Svg size={23} fill="currentColor"><path d="M4 10.5 12 4l8 6.5V20h-5.5v-5.5h-5V20H4z" /></Svg>,
-  card: <Svg size={23}><rect x="3" y="5" width="18" height="14" rx="2.5" /><path d="M3 10h18" /></Svg>,
+  clock23: <Svg size={23}><circle cx="12" cy="13" r="8" /><path d="M12 9v4l2.5 2M9 2h6" /></Svg>,
+  calendar: <Svg><rect x="3.5" y="5" width="17" height="15.5" rx="2.5" /><path d="M3.5 10h17M8 3v4M16 3v4" /><path d="m9.2 15 1.9 1.9 3.8-3.8" /></Svg>,
 };
 const NET = {
   instagram: <Svg size={18} sw={2}><rect x="4" y="4" width="16" height="16" rx="5" /><circle cx="12" cy="12" r="3.8" /><circle cx="17" cy="7" r="1" fill="currentColor" stroke="none" /></Svg>,
@@ -85,37 +92,6 @@ function cssUrl(u) {
   const s = String(u || '').trim();
   if (!/^(https?:\/\/|\/(?!\/)|data:image\/)/i.test(s)) return null;
   return `url("${s.replace(/["\\\n\r]/g, (c) => encodeURIComponent(c))}")`;
-}
-
-// Tiny error boundary scoped to the wallet card render. Without this,
-// any thrown error inside the pass preview bubbles up and Vercel's
-// runtime turns it into a blank page — terrible debugging UX for the
-// owner who tries the URL on a phone.
-class WalletCardErrorBoundary extends React.Component {
-  constructor(props) { super(props); this.state = { error: null }; }
-  static getDerivedStateFromError(error) { return { error }; }
-  componentDidCatch(error, info) {
-    // eslint-disable-next-line no-console
-    console.error('[wallet card] render crash:', error, info?.componentStack);
-  }
-  render() {
-    if (this.state.error) {
-      return (
-        <div className="bg-white rounded-2xl p-6 border border-[#E9E5E0] max-w-md mx-auto text-center my-10">
-          <XCircle className="mx-auto text-[#B85C38] mb-3" size={32} />
-          <p className="text-[#171412] font-semibold mb-1">La carte n'a pas pu s'afficher</p>
-          <p className="text-[#57504A] text-sm">
-            Erreur de rendu :{' '}
-            <code style={{ fontSize: 11 }}>{String(this.state.error?.message || this.state.error)}</code>
-          </p>
-          <p className="text-[#8D857D] text-xs mt-2">
-            Ouvrez la console du navigateur pour la trace complète.
-          </p>
-        </div>
-      );
-    }
-    return this.props.children;
-  }
 }
 
 // The shop's logo, or its first letter when there is none (or it does not load).
@@ -156,7 +132,7 @@ const fmtDay = (s) => {
 
 const TAB_DEFS = [
   { key: 'accueil', label: 'Accueil', icon: I.home },
-  { key: 'carte', label: 'Ma carte', icon: I.card },
+  { key: 'historique', label: 'Historique', icon: I.clock23 },
   { key: 'recompenses', label: 'Récompenses', icon: I.gift(23), link: true },   // → « Vos offres » (2026-11-25)
   { key: 'compte', label: 'Mon compte', icon: I.user(23) },
 ];
@@ -171,18 +147,7 @@ const CardView = () => {
   // RGPD forget-me completed — distinct from `deleted` (card removed from
   // wallet, data kept) because here the DATA itself is gone.
   const [erased, setErased] = useState(false);
-  // the pass at the phone's width (WalletPassPreview draws at a fixed px width)
-  const [passW, setPassW] = useState(() => Math.min(420, Math.max(280, (typeof window !== 'undefined' ? window.innerWidth : 390) - 32)));
-  useEffect(() => {
-    const fit = () => setPassW(Math.min(420, Math.max(280, window.innerWidth - 32)));
-    window.addEventListener('resize', fit);
-    return () => window.removeEventListener('resize', fit);
-  }, []);
   const [toast, setToast] = useState(null);
-  // Forces the InstallPwaPrompt to ignore the "dismissed recently" memory.
-  // We flip this on when the user tries to enable push on iOS without having
-  // installed the PWA first — the install flow is the actual fix.
-  const [showInstallHelp, setShowInstallHelp] = useState(false);
   // The notification the customer just tapped in the News tab. When set,
   // the detail modal at the bottom of the page renders showing the full
   // campaign body, image, and (if present) a CTA link the customer can
@@ -408,10 +373,15 @@ const CardView = () => {
   const [hiddenMsg, setHiddenMsg] = useState(() => {
     try { return localStorage.getItem('fidclic:auto_msg_hidden') || ''; } catch { return ''; }
   });
+  const toastTimer = useRef(null);
   const showToast = (msg) => {
     setToast(msg);
-    setTimeout(() => setToast(null), 2600);
+    clearTimeout(toastTimer.current);
+    toastTimer.current = setTimeout(() => setToast(null), 2600);
   };
+  useEffect(() => () => clearTimeout(toastTimer.current), []);
+  // a network or the store's button with no link yet (user, 2026-11-25)
+  const noLink = () => showToast('Lien pas encore ajouté');
 
   const togglePref = async (key) => {
     if (!data) return;
@@ -439,7 +409,6 @@ const CardView = () => {
               window.navigator.standalone === true;
             if (isIos && !isStandalone) {
               showToast("Ajoutez d'abord la carte à votre écran d'accueil pour activer les notifications.");
-              setShowInstallHelp(true);
             } else {
               showToast("Ce navigateur ne supporte pas les notifications push.");
             }
@@ -601,6 +570,46 @@ const CardView = () => {
     try { window.scrollTo({ top: 0 }); } catch (_e) { /* old browsers */ }
   };
 
+  // « Ajouter à Apple Wallet » tapped in another app opened this card in Safari
+  // with ?wallet=apple (components/WalletButtons). There is no « Ma carte »
+  // button to point at any more (user, 2026-11-25): the page opens the same
+  // pass link itself, once, then waits for the iPhone's word and opens Wallet
+  // (lib/walletOpen) — as that button did. Anywhere but Safari on an iPhone,
+  // only ?wallet= is forgotten.
+  const [appleAdd, setAppleAdd] = useState(null);       // the pass link being opened
+  const appleTried = useRef(false);
+  useEffect(() => {
+    if (appleTried.current || !barcodeId || !data?.customer?.id) return undefined;
+    const search = window.location.search;
+    if (new URLSearchParams(search).get('wallet') !== 'apple') return undefined;
+    appleTried.current = true;
+    try {
+      const q = new URLSearchParams(search);
+      q.delete('wallet');
+      const rest = q.toString();
+      window.history.replaceState(window.history.state, '', `${window.location.pathname}${rest ? `?${rest}` : ''}${window.location.hash}`);
+    } catch (_e) { /* old browsers: the param stays, harmless */ }
+    const place = walletPlace();
+    if (place !== 'safari') return undefined;
+    let gone = false;
+    api.get('/wallet/config', { params: { barcode: barcodeId } }).then((r) => {
+      const href = appleAddHref({ search, barcodeId, key: keyOf(barcodeId), place, appleOn: r?.data?.apple === true });
+      if (!href || gone) return;
+      setAppleAdd(href);
+      try { window.location.href = href; } catch (_e) { /* « Réessayer » below */ }
+      waitForAppleAdd({
+        ask: () => api.get(`/card/${barcodeId}/apple-wallet/added`).then((x) => x.data?.added === true),
+        hidden: () => document.hidden,
+        cancelled: () => gone,
+      }).then((added) => {
+        // #521 dropped the jump to the Wallet app (lib/walletOpen): the card is in Wallet
+        if (!added || gone) return;
+        setAppleAdd(null);
+      });
+    }).catch(() => {});
+    return () => { gone = true; };
+  }, [barcodeId, data?.customer?.id]);
+
   // « Mes dernières activités »: the last three, asked once the card is here
   const [recent, setRecent] = useState(null);
   useEffect(() => {
@@ -747,24 +756,6 @@ const CardView = () => {
   // « Donner mon avis »: 14 days after the last visit — GET /card/{bc} sends it
   const recentVisit = reviewOpen(customer.last_visit_date);
   const pending = rewardsPending(customer);
-  const shareCard = async () => {
-    // the card's public link (no owner key): a friend who opens it gets the signup
-    const url = `${window.location.origin}/card/${barcodeId}`;
-    try {
-      if (navigator.share) {
-        await navigator.share({ title: `${tenant?.name || 'FidClic'} — ma carte de fidélité`, url });
-      } else {
-        await navigator.clipboard.writeText(url);
-        showToast('Lien copié — collez-le où vous voulez');
-      }
-    } catch (_e) { /* cancelled */ }
-  };
-  const homeHelp = () => {
-    const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
-    showToast(isIOS
-      ? 'Dans Safari : bouton Partager, puis « Sur l’écran d’accueil ».'
-      : 'Dans le menu du navigateur : « Ajouter à l’écran d’accueil ».');
-  };
   // the shop's view (?vue=commerce, from the dashboard) stays on through « Mes
   // offres » and back — without it the page took the browser's own card for
   // the shop and opened that one instead (QA F34, 2026-10-11)
@@ -773,7 +764,9 @@ const CardView = () => {
   const shop = tenant?.name || '';
   const firstName = (customer.first_name || String(customer.name || '').trim().split(/\s+/)[0] || '').trim();
   const box = pointsBox(card, customer);
-  const socials = socialLinks(card.socials);
+  const networks = followNetworks(card.socials);
+  const joinUrl = networks.find((n) => n.url)?.url || null;
+  const cta = ctaOf(card);
   const heroUrl = cssUrl(card.hero_photo_url);
   const missed = notifStatus && !notifStatus.subscribed && notifStatus.missed_count > 0;
   const autoMsg = (() => {
@@ -850,10 +843,11 @@ const CardView = () => {
             </div>
           </div>
         </header>
-        <div className="hello"><h1>{firstName ? <>Bonjour, <span className="notranslate" translate="no">{firstName}</span> !</> : 'Bonjour !'}</h1></div>
         <div className="hero-space">
           {!heroUrl && <span data-testid="hero-logo"><ShopLogo url={card.logo_url} name={shop} className="biglogo" /></span>}
         </div>
+        {/* at the photo's bottom, just above the points box (as in PR #519 — user, 2026-11-25) */}
+        <div className="hello"><h1>{firstName ? <>Bonjour, <span className="notranslate" translate="no">{firstName}</span> !</> : 'Bonjour !'}</h1></div>
       </div>
       <div className="hero-tail" aria-hidden="true" />
       <div className="stack">
@@ -864,7 +858,6 @@ const CardView = () => {
               <div className="label">{box.label}</div>
               <div className="big num">{box.big}{box.unit && <> <small>{box.unit}</small></>}</div>
             </div>
-            <button type="button" className="pill" onClick={() => goTab('carte')}>Ma carte {I.chev}</button>
           </div>
           <div className="pb">
             <div>
@@ -927,7 +920,16 @@ const CardView = () => {
             {liveOfferCount > 0 && <span className="badge num">{liveOfferCount} en cours</span>}
           </Link>
           <Link to={`/card/${barcodeId}/partager${q}`} className="sheet tile"><span className="ico">{I.people}</span>Parrainer un proche</Link>
-          <button type="button" className="sheet tile" onClick={() => goTab('historique')}><span className="ico">{I.clock}</span>Historique</button>
+          {/* the store's button (FidClic super admin, per établissement) — a new tab, or « Lien pas encore ajouté » */}
+          {cta.url ? (
+            <a href={cta.url} target="_blank" rel="noopener noreferrer" className="sheet tile" data-testid="card-cta">
+              <span className="ico">{I.calendar}</span>{cta.label}
+            </a>
+          ) : (
+            <button type="button" className="sheet tile" data-testid="card-cta" onClick={noLink}>
+              <span className="ico">{I.calendar}</span>{cta.label}
+            </button>
+          )}
         </div>
 
         <section className="sheet acts" aria-labelledby="wcp-acts">
@@ -941,58 +943,28 @@ const CardView = () => {
           )}
         </section>
 
-        {socials.length > 0 && (
-          <section className="follow" data-testid="follow-us" aria-labelledby="wcp-follow">
-            <h2 id="wcp-follow">Suivez-nous</h2>
-            <p>Restez informé de nos actualités, nouveautés et offres exclusives !</p>
-            <div className="cta">
-              <a href={socials[0].url} target="_blank" rel="noopener noreferrer" className="btn">Nous rejoindre {I.chev}</a>
-              <div className="so">
-                {socials.map((s) => (
-                  <a key={`${s.network}-${s.url}`} href={s.url} target="_blank" rel="noopener noreferrer" aria-label={s.label}>
-                    <span className={NET_CLASS[s.network] || 'gen'}>{NET[s.network] || NET.site}</span>
-                  </a>
-                ))}
-              </div>
-            </div>
-            <div className="hand" aria-hidden="true"><ShopLogo url={card.logo_url} name={shop} className="hl" /></div>
-          </section>
-        )}
-      </div>
-    </>
-  );
-
-  // ─────────────────────────────────────────────────── Ma carte
-  const cartePanel = (
-    <>
-      {tabHead('Ma carte')}
-      <div className="stack">
-        {/* The card itself — the pass as it sits in Apple / Google Wallet, in the shop's colours */}
-        <WalletCardErrorBoundary>
-          <div style={{ display: 'flex', justifyContent: 'center' }}>
-            <div style={{ width: passW, borderRadius: 18, overflow: 'hidden', boxShadow: '0 24px 50px -28px rgba(15,23,42,.6)' }}>
-              <WalletPassPreview customer={customer} tenant={tenant} card={card} width={passW} />
+        {/* always, with the 4 networks (user, 2026-11-25): one not added says so */}
+        <section className="follow" data-testid="follow-us" aria-labelledby="wcp-follow">
+          <h2 id="wcp-follow">Suivez-nous</h2>
+          <p>Restez informé de nos actualités, nouveautés et offres exclusives !</p>
+          <div className="cta">
+            {joinUrl
+              ? <a href={joinUrl} target="_blank" rel="noopener noreferrer" className="btn">Nous rejoindre {I.chev}</a>
+              : <button type="button" className="btn" onClick={noLink}>Nous rejoindre {I.chev}</button>}
+            <div className="so">
+              {networks.map((n) => (n.url ? (
+                <a key={n.network} href={n.url} target="_blank" rel="noopener noreferrer" aria-label={n.label}>
+                  <span className={NET_CLASS[n.network]}>{NET[n.network]}</span>
+                </a>
+              ) : (
+                <button key={n.network} type="button" aria-label={n.label} onClick={noLink}>
+                  <span className={NET_CLASS[n.network]}>{NET[n.network]}</span>
+                </button>
+              )))}
             </div>
           </div>
-        </WalletCardErrorBoundary>
-        {/* Native wallets — shown once the certificates are configured */}
-        <WalletButtons barcodeId={barcodeId} onError={showToast} />
-        <div className="share3">
-          {[[Share2, 'Partager / copier', shareCard], [Smartphone, 'Sur l’écran d’accueil', homeHelp], [Printer, 'Imprimer', () => window.print()]].map(([Icon, label, fn]) => (
-            <button key={label} type="button" onClick={fn} className="sheet"><Icon size={18} aria-hidden="true" /> {label}</button>
-          ))}
-        </div>
-        <p className="small">La carte se met à jour après chaque visite, dans n’importe quel navigateur.</p>
-        {/* iOS needs the card on the home screen before it can receive notifications */}
-        <InstallPwaPrompt
-          context="card"
-          force={showInstallHelp}
-          onInstalled={() => {
-            if (data?.tenant?.slug && barcodeId) ensureSubscribed(data.tenant.slug, barcodeId).catch(() => {});
-            setShowInstallHelp(false);
-          }}
-        />
-        <GeoConsentCard customerId={customer.id} tenantSlug={tenant.slug} barcodeId={barcodeId} />
+          <div className="hand" aria-hidden="true"><ShopLogo url={card.logo_url} name={shop} className="hl" /></div>
+        </section>
       </div>
     </>
   );
@@ -1168,10 +1140,10 @@ const CardView = () => {
     </>
   );
 
-  // ─────────────────────────────────────────────────── Historique (from « Voir tout » / the tile)
+  // ─────────────────────────────────────────────────── Historique (the bottom tab, « Voir tout »)
   const historyPanel = (
     <>
-      {tabHead('Historique', () => (location.state?.cardTab ? navigate(-1) : goTab('accueil')))}
+      {tabHead('Historique')}
       <div className="stack">
         <section className="sheet acts" aria-label="Toutes mes activités">
           <ActivityRows items={history.items} card={card} testId="history-list" />
@@ -1189,9 +1161,9 @@ const CardView = () => {
     </>
   );
 
-  const panels = { accueil: home, carte: cartePanel, recompenses: recompensesPanel, compte: comptePanel, historique: historyPanel };
-  const tabLabel = TAB_DEFS.find((t) => t.key === tab)?.label || 'Historique';
-  // the lit bottom item: none on the hidden views (programme, historique)
+  const panels = { accueil: home, recompenses: recompensesPanel, compte: comptePanel, historique: historyPanel };
+  const tabLabel = TAB_DEFS.find((t) => t.key === tab)?.label || 'Accueil';
+  // the lit bottom item: none on the hidden programme view
   const lit = navActive(tab);
   const hidden = !lit;
 
@@ -1228,7 +1200,13 @@ const CardView = () => {
         </div>
       </nav>
 
-      {toast && <div role="status" className="wcp-toast">{toast}</div>}
+      {toast && <div role="status" aria-live="polite" className="wcp-toast">{toast}</div>}
+      {/* ?wallet=apple from another app: the add is under way (no « Ma carte » tab to show it in) */}
+      {appleAdd && (
+        <div role="status" aria-live="polite" className="wcp-toast wcp-apple" data-testid="apple-wallet-opening">
+          Ajout à Apple Wallet en cours… <a href={appleAdd} className="u">Réessayer</a>
+        </div>
+      )}
 
       {/* « Voir l'offre » on the back of the Wallet pass (?offre=) opens that campaign here */}
       {openedNotification && (

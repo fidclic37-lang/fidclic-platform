@@ -408,6 +408,9 @@ export const adminAPI = {
   // a business's services, one by one (2026-11-11)
   commerceServices: (id) => api.get(`/admin/commerces/${id}/services`),
   setCommerceServices: (id, body) => api.put(`/admin/commerces/${id}/services`, body),
+  // « Bouton de la carte client » (2026-11-25): the card page's 3rd tile, per établissement — super admin only
+  commerceCardCta: (id) => api.get(`/admin/commerces/${id}/card-cta`),
+  setCommerceCardCta: (id, storeId, body) => api.put(`/admin/commerces/${id}/card-cta/${encodeURIComponent(storeId)}`, body),
   suspendCommerce: (id, reason) => api.post(`/admin/commerces/${id}/suspend`, { reason }),
   reactivateCommerce: (id) => api.post(`/admin/commerces/${id}/reactivate`),
   resilierCommerce: (id, body) => api.post(`/admin/commerces/${id}/resilier`, body),
