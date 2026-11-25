@@ -103,6 +103,7 @@ const MyWalletCardPage = lazyPage(() => import('./pages/MyWalletCardPage'));
 const ReaddCardPage = lazyPage(() => import('./pages/ReaddCardPage'));
 const CardOffersPage = lazyPage(() => import('./pages/CardOffersPage'));
 const CardSharePage = lazyPage(() => import('./pages/CardSharePage'));
+const AppleWalletAddPage = lazyPage(() => import('./pages/AppleWalletAddPage'));
 const HistoryPage = lazyPage(() => import('./pages/HistoryPage'));
 
 const AdminDashboard = lazyPage(() => import('./pages/AdminDashboard')); // eslint-disable-line no-unused-vars -- superseded by admin/AdminDashboardPage, kept for rollback
@@ -372,6 +373,7 @@ function App() {
           <Route path="/inscription/:slug/:channel/:channel2" element={<JoinPage />} />
           <Route path="/card/:barcodeId/offres" element={<CardOffersPage />} />
           <Route path="/card/:barcodeId/partager" element={<CardSharePage />} />
+          <Route path="/card/:barcodeId/ajouter" element={<AppleWalletAddPage />} />
           <Route path="/card/:barcodeId" element={<MyWalletCardPage />} />
           {/* a card given back by the shop: a one-time link (features/card_status) */}
           <Route path="/carte/recuperer/:token" element={<ReaddCardPage />} />

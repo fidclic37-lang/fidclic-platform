@@ -21,6 +21,10 @@ os.environ["APPLE_PASS_KEY_B64"] = base64.b64encode(b"key").decode()
 with mongomock.patch(servers=(("localhost", 27017),)):
     import server
     from features import wallet_passes as W
+    from features import automations as _AU
+    # the card-added « Bienvenue » pushes too (tests/test_wallet_added_note.py,
+    # 2026-11-25): this file counts the catch-up and history pushes only
+    _AU.card_added_note = lambda *a, **kw: False
     from services import apns_passes as AP
     from models import TokenData
 
