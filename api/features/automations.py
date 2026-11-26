@@ -1635,10 +1635,10 @@ def wallet_added(tid: str, cust: Dict[str, Any], wallet: str) -> List[Dict[str, 
     fresh = _db.customers.find_one({"id": cust["id"]}, {"_id": 0}) or cust
     if wallet == "apple" and added_before(fresh, _now()):
         return []                                  # back on an iPhone: a return, never a welcome
-    out = fire("welcome", tid, fresh, {"event": "wallet", "wallet": wallet})
-    if wallet == "apple" and not any(out):
-        card_added_note(tid, fresh)
-    return out
+    # only the shop's own Bienvenue speaks — off, outside its audience, another
+    # establishment's client, a paused client, a plan without it: nothing
+    # (user, 2026-11-26: « fidclic ka apna khud ka message mat rkho kuch »)
+    return fire("welcome", tid, fresh, {"event": "wallet", "wallet": wallet})
 
 
 def pushed_now(out: List[Dict[str, Any]]) -> bool:
@@ -1682,51 +1682,6 @@ def added_before(cust: Optional[Dict[str, Any]], at: datetime) -> bool:
     except Exception as exc:                           # noqa: BLE001
         print(f"automations: wallet history not read ({exc})")
         return True
-
-
-def card_added_note(tid: str, cust: Dict[str, Any]) -> bool:
-    """FidClic's own « Bienvenue » on the card that just landed in Apple Wallet
-    (user, 2026-11-25: « jab wallet khule toh wohi card dikhe »). No web page
-    may open Wallet at one card; the pass's own lock-screen banner does — it
-    opens that very card. Sent when the shop's Bienvenue automation is on
-    but said nothing to this client (never when it is off): the card's
-    « Dernier message » only (no web push, no SMS, no
-    offer, no points), once per client. Never raises."""
-    try:
-        if not tid or not cust or not cust.get("id") or cust.get("deleted_at"):
-            return False
-        tenant = _db.tenants.find_one({"id": tid}, {"_id": 0, "name": 1, "is_active": 1}) or {}
-        if not tenant or tenant.get("is_active") is False:
-            return False
-        # the shop switched its Bienvenue off: nothing goes, not even ours
-        # (user, 2026-11-26: Royal Trim Liberté had it off and a client still
-        # got « Bienvenue chez Royal Trim Liberté » — « bilkul na bheje »)
-        if not scenario_on(tid, "welcome"):
-            return False
-        if _db.automation_log.find_one({"customer_id": cust["id"], "scenario": "welcome"}, {"_id": 1}):
-            return False                               # the shop already welcomed this client
-        at = _now()
-        # on an iPhone before (not this minute's iPhone + its Watch): a return, not a welcome
-        if added_before(cust, at):
-            return False
-        claimed = _db.customers.update_one({"id": cust["id"], "card_added_note_at": None},
-                                           {"$set": {"card_added_note_at": at}})
-        if not claimed.modified_count:
-            return False                               # said already (a second iPhone, a retry)
-        shop = (tenant.get("name") or "").strip()
-        first = (cust.get("name") or "").strip().split(" ")[0]
-        title = f"Bienvenue chez {shop} 🎉" if shop else "Bienvenue 🎉"
-        body = (f"Merci {first} ! " if first else "Merci ! ") + \
-            "Votre carte de fidélité est prête : à chaque visite, vous vous rapprochez de votre récompense."
-        _db.customers.update_one({"id": cust["id"]}, {"$set": {"auto_news": {
-            "log_id": f"card-added-{cust['id']}", "title": title[:160], "body": body[:600], "label": None, "url": None,
-            "at": at, "kind": "card_added"}}})
-        from features.wallet_passes import notify_customer
-        notify_customer(cust["id"])
-        return True
-    except Exception as exc:                           # noqa: BLE001
-        print(f"automations: card-added welcome not sent ({exc})")
-        return False
 
 
 # ---------------------------------------------------------------------------

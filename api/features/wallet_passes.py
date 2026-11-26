@@ -4071,14 +4071,7 @@ def _send_welcome(serial: str, pushed_only: bool = False) -> bool:
     if not full:
         return False
     out = AU.wallet_added(full.get("tenant_id"), full, "apple")
-    if not pushed_only:
-        return True
-    if AU.pushed_now(out):
-        return True
-    if full.get("card_added_note_at"):
-        return False                               # said before: nothing pushed now
-    now_row = _db.customers.find_one({"barcode_id": serial}, {"_id": 0, "card_added_note_at": 1}) or {}
-    return bool(now_row.get("card_added_note_at"))
+    return True if not pushed_only else AU.pushed_now(out)
 
 
 def queue_welcome(serial: str, tenant_id: Optional[str]) -> None:
