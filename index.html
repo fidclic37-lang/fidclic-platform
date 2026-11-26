@@ -164,6 +164,68 @@
           else document.addEventListener('DOMContentLoaded', function () { document.body.appendChild(div); });
         }
 
+        // Card watchdog (user, 2026-11-26: one iPhone's Chrome loaded the card
+        // link, ran the app, and stopped before the card page asked anything —
+        // Safari on the same phone opened it). The card page sets
+        // window.__fcCardOk as soon as it starts (MyWalletCardPage, cardAlive).
+        // Not set after WAIT ms: reload once with a fresh document (?_r=);
+        // still not set: a plain screen — Réessayer, Ouvrir sans traduction,
+        // or open the link in Safari. Plain DOM: it must work without the app.
+        function cardWatchdog() {
+          var WAIT = 12000, KEY = 'fidclic:card-watchdog';
+          // the card page itself only — /card/X/offres, /partager… are other pages
+          if (!/^\/card\/[A-Za-z0-9_-]+\/?$/.test(location.pathname || '')) return;
+          window.__fcCardOk = false;
+          setTimeout(function () {
+            if (window.__fcCardOk) return;
+            var tries = 0;
+            try { tries = +(sessionStorage.getItem(KEY) || 0) || 0; } catch (e) { tries = 1; }
+            if (tries < 1) {
+              try { sessionStorage.setItem(KEY, '1'); } catch (e) { /* private mode: straight to the screen next time */ }
+              var u = location.pathname + location.search.replace(/([?&])_r=\d+&?/, '$1').replace(/[?&]$/, '');
+              u += (u.indexOf('?') === -1 ? '?' : '&') + '_r=' + Date.now();
+              location.replace(u + location.hash);
+              return;
+            }
+            stuckScreen(KEY);
+          }, WAIT);
+        }
+        function stuckScreen(KEY) {
+          function go(plain) {
+            try { sessionStorage.removeItem(KEY); } catch (e) { /* */ }
+            if (plain) {
+              try {
+                localStorage.removeItem('fidelitour:lang');
+                localStorage.removeItem('fidclic:lang-chosen');
+                localStorage.removeItem('fidelitour:translations');
+              } catch (e) { /* */ }
+            }
+            location.replace(location.pathname + location.search.replace(/([?&])_r=\d+&?/, '$1').replace(/[?&]$/, '') + location.hash);
+          }
+          function show() {
+            if (document.getElementById('fc-card-stuck')) return;
+            var d = document.createElement('div');
+            d.id = 'fc-card-stuck';
+            d.setAttribute('data-testid', 'card-stuck');
+            d.setAttribute('role', 'alert');
+            d.setAttribute('translate', 'no');
+            d.style.cssText = 'position:fixed;inset:0;z-index:99998;background:#FAFAF8;display:flex;align-items:center;justify-content:center;padding:24px;font:15px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;color:#171412';
+            d.innerHTML = '<div style="max-width:360px;width:100%;background:#fff;border:1px solid #E9E5E0;border-radius:18px;padding:24px;text-align:center">'
+              + '<p style="font-weight:700;font-size:17px;margin:0 0 8px">Votre carte met du temps à s’ouvrir</p>'
+              + '<p style="color:#57504A;font-size:14px;margin:0 0 18px">Réessayez. Si rien ne change, ouvrez ce lien dans Safari.</p>'
+              + '<button type="button" data-a="retry" style="display:block;width:100%;min-height:46px;border:0;border-radius:12px;background:#171412;color:#fff;font:inherit;font-weight:600;margin-bottom:10px">Réessayer</button>'
+              + '<button type="button" data-a="plain" style="display:block;width:100%;min-height:46px;border:1px solid #D9D3CC;border-radius:12px;background:#fff;color:#171412;font:inherit;font-weight:600">Ouvrir sans traduction</button>'
+              + '</div>';
+            d.addEventListener('click', function (ev) {
+              var a = ev.target && ev.target.getAttribute && ev.target.getAttribute('data-a');
+              if (a === 'retry') go(false);
+              if (a === 'plain') go(true);
+            });
+            document.body.appendChild(d);
+          }
+          if (document.body) show(); else document.addEventListener('DOMContentLoaded', show);
+        }
+
         try {
           var pathname = location.pathname || '/';
           note('pathname = ' + pathname);
@@ -195,6 +257,7 @@
             } catch (e) { key = ''; }
             addManifest('/api/manifest/' + bc + (key ? '?k=' + encodeURIComponent(key) : ''));
             note('manifest link injected → /api/manifest/' + bc + (key ? ' (owner)' : ''));
+            cardWatchdog();
             showHud();
             return; // we're already on the right URL, nothing to redirect
           }

@@ -1363,6 +1363,17 @@ function NotificationDetailModal({ notification, tenant, card, customerId, onClo
  * link and the cards this phone holds (lib/myCards). Nothing of the card is
  * loaded before it answers « card ».
  */
+// The « whose card » question gets this long; then the owner's link (or this
+// phone's own key) opens the card without the answer.
+const WHOSE_TIMEOUT = 10_000;
+
+// index.html starts a watchdog on every /card/ page: if the app never gets
+// this far, it reloads once, then shows a plain « Réessayer » screen.
+function cardAlive() {
+  try { window.__fcCardOk = true; } catch (_e) { /* */ }
+  try { sessionStorage.removeItem('fidclic:card-watchdog'); } catch (_e) { /* private mode */ }
+}
+
 const CardOwnerGate = () => {
   const { barcodeId } = useParams();
   const navigate = useNavigate();
@@ -1375,15 +1386,21 @@ const CardOwnerGate = () => {
     const params = new URLSearchParams(location.search);
     const k = params.get('k') || '';
     setView(null);
+    // the app is up: index.html's watchdog stands down (2026-11-26 — one
+    // iPhone's Chrome stopped before this question was ever asked)
+    cardAlive();
     // ?vue=commerce: opened from the dashboard (« Voir sa carte »), the shop's
-    // team sees the card; a camera scan never asks for that view
-    api.post(`/card/${bc}/whose`, { k: k || null, mine: readMine(), shop: params.get('vue') === 'commerce' })
+    // team sees the card; a camera scan never asks for that view.
+    // Never waited on for ever: past WHOSE_TIMEOUT the owner's link opens the card.
+    api.post(`/card/${bc}/whose`, { k: k || null, mine: readMine(), shop: params.get('vue') === 'commerce' },
+      { timeout: WHOSE_TIMEOUT })
       .then(({ data }) => {
         if (!alive) return;
         forgetMine(data?.drop || []);
         if (data?.key) addMine(bc, data.key);
-        if (k) {                               // the key is kept on the phone, not in the address bar
+        if (k || params.has('_r')) {           // the key is kept on the phone, not in the address bar
           params.delete('k');
+          params.delete('_r');                 // the watchdog's retry mark
           const q = params.toString();
           navigate({ pathname: location.pathname, search: q ? `?${q}` : '', hash: location.hash }, { replace: true });
         }
@@ -1399,6 +1416,9 @@ const CardOwnerGate = () => {
       })
       .catch((e) => {
         if (!alive) return;
+        // no answer (timeout, network): the link's own key goes with the card's
+        // requests — the server still checks it on every one of them
+        if (k && !e?.response) addMine(bc, k);
         // an unknown card: the view says « Carte introuvable »; otherwise only
         // this phone's own card opens without the server's answer
         setView(e?.response?.status === 404 || keyOf(bc) || k ? 'card' : 'retry');
