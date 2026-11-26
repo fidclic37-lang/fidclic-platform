@@ -9,8 +9,11 @@ the iPhone is pushed — the banner « Bienvenue chez … » appears.
 
     · the shop's own « Bienvenue » automation is on: it speaks (its words),
       nothing more is added;
-    · it is off (the default): FidClic's short welcome goes — no offer, no
-      points, no web push, no SMS: only the card's banner;
+    · it is on but said nothing to this client: FidClic's short welcome goes
+      — no offer, no points, no web push, no SMS: only the card's banner;
+    · it is off (the default): NOTHING goes (user, 2026-11-26: Royal Trim
+      Liberté had it off and a client still got « Bienvenue » — « bilkul na
+      bheje »);
     · once per client: a second iPhone, a removed-then-added card, a lane
       retry say nothing more;
     · Google Wallet opens the card itself after « Enregistrer »: nothing here.
@@ -75,8 +78,58 @@ def main():
     shop("rt", "Royal Trim")
     shop("rt-on", "Barbier Ouvert")
     shop("pct", "Café 100%")
+    shop("rt-off", "Royal Trim Liberté")
+    pt = os.environ.get("APPLE_PASS_TYPE_ID") or "pass.com.fidclic.test"
+    os.environ["APPLE_PASS_TYPE_ID"] = pt
 
-    print("\n1. Apple: the shop's Bienvenue is off (the default) → FidClic's welcome")
+    print("\n0. The shop's Bienvenue is off (user, 2026-11-26: « bilkul na bheje ») → nothing at all")
+    c = card("rt-off", "FT-OFF00001")
+    out = AU.wallet_added("rt-off", c, "apple")
+    row = db.customers.find_one({"barcode_id": "FT-OFF00001"}, {"_id": 0})
+    check("no « Dernier message » on the card", news("FT-OFF00001") is None, news("FT-OFF00001"))
+    check("no push to the iPhone", pushed == [], pushed)
+    check("no web push / SMS", webpush == [], webpush)
+    check("nothing claimed on the client", row.get("card_added_note_at") is None, row)
+    check("nothing in the automation log", db.automation_log.count_documents({"customer_id": "ft-off00001"}) == 0)
+    check("wallet_added says nothing was sent", not any(out or []), out)
+    check("card_added_note itself refuses (any caller)", AU.card_added_note("rt-off", c) is False and news("FT-OFF00001") is None)
+    AU.migrate("rt-off")
+    db.automations.update_many({"tenant_id": "rt-off", "scenario": "welcome"}, {"$set": {"status": "paused"}})
+    c = card("rt-off", "FT-OFF00002")
+    AU.wallet_added("rt-off", c, "apple")
+    check("switched off on the Automatisations page (paused): nothing either",
+          news("FT-OFF00002") is None and pushed == [], pushed)
+    card("rt-off", "FT-OFF00003")
+    r = http("POST", f"/api/passes/v1/devices/devOff/registrations/{pt}/FT-OFF00003",
+             headers={"Authorization": "ApplePass " + WP._auth_token("FT-OFF00003")}, json={"pushToken": "tokOff"})
+    check(f"the iPhone's own call ({r.status_code}): linked, nothing said",
+          r.status_code in (200, 201) and news("FT-OFF00003") is None and pushed == [], (pushed, news("FT-OFF00003")))
+    card("rt-off", "FT-OFF00004")
+    WP.queue_welcome("FT-OFF00004", "rt-off")
+    WP.run_welcome_due()
+    check("through the iPhone's lane: nothing said", news("FT-OFF00004") is None and pushed == [], pushed)
+    caught = []
+    real_catch = WP._catch_up
+    WP._catch_up = lambda *a, **kw: caught.append(a)
+    card("rt-off", "FT-OFF00005", apple_downloaded_at=now - dt.timedelta(seconds=60),
+         last_visit_date=now - dt.timedelta(seconds=30), visits=1)
+    http("POST", f"/api/passes/v1/devices/devOff5/registrations/{pt}/FT-OFF00005",
+         headers={"Authorization": "ApplePass " + WP._auth_token("FT-OFF00005")}, json={"pushToken": "tokOff5"})
+    check("scanned before the add: the catch-up push still brings the card up to date",
+          len(caught) == 1 and news("FT-OFF00005") is None, caught)
+    WP._catch_up = real_catch
+    pushed.clear()
+
+    # From here the shops' Bienvenue is ON but says nothing to these clients
+    # (outside its audience, …): FidClic's own short welcome is what is tested.
+    SILENT = {"rt", "pct"}
+    real_fire = AU.fire
+    AU.fire = lambda sc, tid, cust, ctx=None, at=None: [] if tid in SILENT else real_fire(sc, tid, cust, ctx, at)
+    for t in SILENT:
+        AU.migrate(t)
+        db.automations.update_many({"tenant_id": t, "scenario": "welcome"}, {"$set": {"status": "active"}})
+
+    print("\n1. Apple: the shop's Bienvenue is on but said nothing → FidClic's welcome")
     c = card("rt", "FT-NOTE0001")
     AU.wallet_added("rt", c, "apple")
     n = news("FT-NOTE0001")
@@ -201,8 +254,6 @@ def main():
 
     print("\n6. The whole way: the iPhone's own call")
     pushed.clear()
-    pt = os.environ.get("APPLE_PASS_TYPE_ID") or "pass.com.fidclic.test"
-    os.environ["APPLE_PASS_TYPE_ID"] = pt
     card("rt", "FT-NOTE0007")
     r = http("POST", f"/api/passes/v1/devices/devA/registrations/{pt}/FT-NOTE0007",
              headers={"Authorization": "ApplePass wrong"}, json={"pushToken": "tokA"})

@@ -1688,14 +1688,20 @@ def card_added_note(tid: str, cust: Dict[str, Any]) -> bool:
     """FidClic's own « Bienvenue » on the card that just landed in Apple Wallet
     (user, 2026-11-25: « jab wallet khule toh wohi card dikhe »). No web page
     may open Wallet at one card; the pass's own lock-screen banner does — it
-    opens that very card. Sent when the shop's Bienvenue automation said
-    nothing: the card's « Dernier message » only (no web push, no SMS, no
+    opens that very card. Sent when the shop's Bienvenue automation is on
+    but said nothing to this client (never when it is off): the card's
+    « Dernier message » only (no web push, no SMS, no
     offer, no points), once per client. Never raises."""
     try:
         if not tid or not cust or not cust.get("id") or cust.get("deleted_at"):
             return False
         tenant = _db.tenants.find_one({"id": tid}, {"_id": 0, "name": 1, "is_active": 1}) or {}
         if not tenant or tenant.get("is_active") is False:
+            return False
+        # the shop switched its Bienvenue off: nothing goes, not even ours
+        # (user, 2026-11-26: Royal Trim Liberté had it off and a client still
+        # got « Bienvenue chez Royal Trim Liberté » — « bilkul na bheje »)
+        if not scenario_on(tid, "welcome"):
             return False
         if _db.automation_log.find_one({"customer_id": cust["id"], "scenario": "welcome"}, {"_id": 1}):
             return False                               # the shop already welcomed this client
