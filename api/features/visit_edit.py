@@ -141,9 +141,24 @@ def _visit(tid: str, customer_id: str, visit_id: str) -> Dict[str, Any]:
     return v
 
 
+def _store_check(token_data: TokenData, request: Optional[Request], v: Dict[str, Any]) -> None:
+    """A manager corrects only the visits scanned at THEIR establishments: a
+    shared client's visit at another store stays that store's (pentest
+    2026-11-26). The owner covers every store; a header never widens."""
+    from features import store_scope as S
+    sc = S.resolve(token_data, request)
+    if set(sc.all_ids) <= set(sc.allowed):
+        return
+    branch = v.get("branch_id") or "main"
+    if branch not in sc.allowed:
+        raise HTTPException(status_code=403, detail="Cet achat a été enregistré dans un établissement qui n'est pas le vôtre.")
+
+
 def _after_customer(tid: str, cid: str, time_changed: bool) -> Dict[str, Any]:
-    """Re-read the client's total, last visit and palier after a change."""
-    from features import customer_edit as CE
+    """Re-read the client's total, last visit and palier after a change.
+    The palier is read from the whole client (tier_best included): a rung
+    reached is never taken back (loyalty_card.tier_of, pentest 2026-11-26)."""
+    from features import loyalty_card as LC
     c = _db.customers.find_one({"id": cid, "tenant_id": tid}, {"_id": 0}) or {}
     sets: Dict[str, Any] = {"updated_at": _now()}
     if float(c.get("total_amount_paid") or 0) < 0:
@@ -154,8 +169,7 @@ def _after_customer(tid: str, cid: str, time_changed: bool) -> Dict[str, Any]:
                                    sort=[("visit_time", -1)])
         if last and last.get("visit_time"):
             sets["last_visit_date"] = last["visit_time"]
-    sets["tier"] = CE._tier(tid, int(c.get("visits") or 0), int(c.get("points") or 0),
-                            float(c.get("total_amount_paid") or 0))
+    sets["tier"] = LC.tier_of(c, tid)
     _db.customers.update_one({"id": cid, "tenant_id": tid}, {"$set": sets})
     c.update(sets)
     return c
@@ -199,6 +213,7 @@ def edit_purchase(customer_id: str, visit_id: str, body: PurchaseIn, request: Re
     tid = token_data.tenant_id
     c = CE._customer(token_data, request, customer_id)
     v = _visit(tid, customer_id, visit_id)
+    _store_check(token_data, request, v)
 
     sets: Dict[str, Any] = {}
     changed: List[str] = []
@@ -254,9 +269,13 @@ def edit_purchase(customer_id: str, visit_id: str, body: PurchaseIn, request: Re
     sets.update({"edited_at": now, "edited_by": token_data.email})
     reason = " ".join((body.reason or "").split()) or None
     before = {"items": old_lines, "amount_paid": old_amount, "visit_time": old_time, "amount_manual": bool(v.get("amount_manual"))}
-    _db.visits.update_one({"id": visit_id, "tenant_id": tid},
-                          {"$set": sets, "$push": {"edits": {"at": now, "by": token_data.email, "reason": reason,
-                                                              "before": before, "changed": changed}}})
+    done = _db.visits.update_one({"id": visit_id, "tenant_id": tid, "customer_id": customer_id},
+                                 {"$set": sets, "$push": {"edits": {"at": now, "by": token_data.email, "reason": reason,
+                                                                     "before": before, "changed": changed}}})
+    if not getattr(done, "matched_count", 1):
+        # deleted between the read and the write (an edit beside a delete):
+        # nothing was written, so the client's total must not move either
+        raise HTTPException(status_code=404, detail="Cet achat vient d'être supprimé.")
 
     # -- the client follows ------------------------------------------------------
     delta = round(new_amount - old_amount, 2)
@@ -312,6 +331,7 @@ def cancel_purchase(customer_id: str, visit_id: str, body: Optional[CancelIn] = 
     body = body or CancelIn()
     c = CE._customer(token_data, request, customer_id)
     v = _visit(tid, customer_id, visit_id)
+    _store_check(token_data, request, v)
     if v.get("paper_stamps"):
         raise HTTPException(status_code=409, detail="Cet achat a transféré une carte papier : ajustez les tampons "
                                                     "depuis « Ajuster » plutôt que de le supprimer.")
