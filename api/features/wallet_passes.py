@@ -4030,7 +4030,13 @@ def _after_register(device_id: str, serial: str, token: str, cust: Dict[str, Any
     welcomed = False
     if not existing:
         try:                                     # the pass is in an Apple Wallet (again): Clients › Carte reads « Active »
-            _db.customers.update_one({"barcode_id": serial}, {"$set": {"wallet_added_at": datetime.now(timezone.utc)}})
+            now = datetime.now(timezone.utc)
+            prev = _db.customers.find_one({"barcode_id": serial}, {"_id": 0, "wallet_added_at": 1}) or {}
+            # the first add is never overwritten: a card added in October is
+            # still « added before » when its iPhone links again (2026-11-26)
+            _db.customers.update_one({"barcode_id": serial}, {
+                "$set": {"wallet_added_at": now},
+                "$min": {"wallet_first_added_at": _aware_dt(prev.get("wallet_added_at")) or now}})
         except Exception as exc:                 # noqa: BLE001
             print(f"wallet: added date not kept ({exc})")
         try:                                     # Bienvenue (once per client, features/automations)

@@ -120,6 +120,53 @@ def main():
     check("added on two devices at once (iPhone + Watch): welcomed, once", bool(news("FT-NOTE0013")) and pushed == ["ft-note0013"], pushed)
     pushed.clear()
 
+    print("\n2b. Already in a Wallet before the log existed (user, 2026-11-26: Mahdi's card, added in October,")
+    print("    got « Bienvenue » today) — any earlier add counts, from 1 Jan 2026 on")
+    oct_ = dt.datetime(2026, 10, 12, 9, 0, tzinfo=dt.timezone.utc)
+    jan = dt.datetime(2026, 1, 1, 0, 0, tzinfo=dt.timezone.utc)
+    c = card("rt", "FT-OLD00001")                      # another iPhone linked in October, no log row
+    db.pass_registrations.insert_one({"device_id": "devOct", "serial": "FT-OLD00001", "push_token": "tOct",
+                                      "tenant_id": "rt", "created_at": oct_})
+    AU.wallet_added("rt", c, "apple")
+    check("another iPhone held it since October: no Bienvenue", news("FT-OLD00001") is None and pushed == [], pushed)
+    c = card("rt", "FT-OLD00002", wallet_added_at=oct_)  # its iPhone's row was dropped since (dead token)
+    AU.wallet_added("rt", c, "apple")
+    check("« added » in October on the client: no Bienvenue", news("FT-OLD00002") is None and pushed == [], pushed)
+    c = card("rt", "FT-OLD00003", wallet_first_added_at=jan)
+    AU.wallet_added("rt", c, "apple")
+    check("first added on 1 Jan 2026: no Bienvenue", news("FT-OLD00003") is None and pushed == [], pushed)
+    c = card("rt", "FT-OLD00004", apple_unregistered_fetch_at=oct_)
+    AU.wallet_added("rt", c, "apple")
+    check("an iPhone already fetched it (unregistered): no Bienvenue", news("FT-OLD00004") is None and pushed == [], pushed)
+    c = card("rt", "FT-OLD00005")
+    db.pass_push_log.insert_one({"serial": "FT-OLD00005", "device_id": "devP", "sent_at": oct_})
+    AU.wallet_added("rt", c, "apple")
+    check("an iPhone was pushed this card before: no Bienvenue", news("FT-OLD00005") is None and pushed == [], pushed)
+    c = card("rt", "FT-OLD00006")                      # iPhone + its Watch, a minute apart: one add
+    db.pass_registrations.insert_one({"device_id": "devW", "serial": "FT-OLD00006", "push_token": "tW",
+                                      "tenant_id": "rt", "created_at": now - dt.timedelta(minutes=1)})
+    AU.wallet_added("rt", c, "apple")
+    check("another device a minute ago (Watch): still one welcome", pushed == ["ft-old00006"], pushed)
+    pushed.clear()
+    check("a client never in a Wallet: added_before is False", AU.added_before(card("rt", "FT-OLD00007"), now) is False)
+    check("odd inputs: added_before never raises", AU.added_before(None, now) is False and AU.added_before({}, now) is False)
+    check("dates as text are read too", AU.added_before(card("rt", "FT-OLD00008",
+                                                             wallet_added_at="2026-10-12T09:00:00+00:00"), now) is True)
+
+    print("\n2c. The shop's own Bienvenue automation is on: an old card added again says nothing either")
+    AU.migrate("rt-old")
+    shop("rt-old", "Barbier Ancien")
+    db.automations.update_many({"tenant_id": "rt-old", "scenario": "welcome"}, {"$set": {"status": "active"}})
+    c = card("rt-old", "FT-OLD00009", wallet_added_at=oct_)
+    AU.wallet_added("rt-old", c, "apple")
+    check("no automation message for a card added before",
+          db.automation_log.count_documents({"customer_id": "ft-old00009"}) == 0 and pushed == [], pushed)
+    c = card("rt-old", "FT-OLD00010")
+    AU.wallet_added("rt-old", c, "apple")
+    check("a genuinely new card still gets the shop's Bienvenue",
+          db.automation_log.count_documents({"customer_id": "ft-old00010"}) == 1)
+    pushed.clear()
+
     print("\n3. The shop's own Bienvenue is on → its words, nothing added")
     AU.migrate("rt-on")
     db.automations.update_many({"tenant_id": "rt-on", "scenario": "welcome"}, {"$set": {"status": "active"}})
@@ -169,6 +216,21 @@ def main():
     r = http("POST", f"/api/passes/v1/devices/devA/registrations/{pt}/FT-NOTE0007",
              headers={"Authorization": "ApplePass " + WP._auth_token("FT-NOTE0007")}, json={"pushToken": "tokA"})
     check("the same iPhone asks again: nothing more", pushed == [], pushed)
+    row = db.customers.find_one({"barcode_id": "FT-NOTE0007"}, {"_id": 0})
+    check("the first add's date is kept on the client", row.get("wallet_first_added_at") is not None, row)
+
+    print("\n6a. The whole way: a card added in October (no log), its iPhone links again today")
+    pushed.clear()
+    oct_ = dt.datetime(2026, 10, 12, 9, 0, tzinfo=dt.timezone.utc)
+    card("rt", "FT-OLD00011", wallet_added_at=oct_)
+    r = http("POST", f"/api/passes/v1/devices/devM/registrations/{pt}/FT-OLD00011",
+             headers={"Authorization": "ApplePass " + WP._auth_token("FT-OLD00011")}, json={"pushToken": "tokM"})
+    row = db.customers.find_one({"barcode_id": "FT-OLD00011"}, {"_id": 0})
+    check(f"linked ({r.status_code}), no Bienvenue", r.status_code in (200, 201) and news("FT-OLD00011") is None
+          and pushed == [], (pushed, news("FT-OLD00011")))
+    first = row.get("wallet_first_added_at")
+    first = first if not first or first.tzinfo else first.replace(tzinfo=dt.timezone.utc)
+    check("the October date stays the first add", first == oct_, row)
 
     print("\n6b. Scanned between the download and the add: one push, not two")
     caught = []
