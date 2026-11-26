@@ -254,6 +254,29 @@ def main():
     check("no token → 401", http("PUT", "/api/owner/clients/c1/purchases/v2", json={"amount_paid": 1}).status_code == 401)
     check("v2 untouched by the refusals", visit("v2")["amount_paid"] == 22.0 and cust("c1")["total_amount_paid"] == 51.0)
 
+    print("\n7b. A manager corrects only the visits of their own establishments (pentest 2026-11-26)")
+    check("PALISSY administrateur, a visit scanned at LIBERTÉ (shared client) → 403",
+          http("PUT", "/api/owner/clients/c1/purchases/v1", headers=P, json={"amount_paid": 3}).status_code == 403)
+    check("…deleting it → 403", http("POST", "/api/owner/clients/c1/purchases/v1/cancel", headers=P, json={}).status_code == 403)
+    check("…even with the LIBERTÉ store in the header (never widens)",
+          http("PUT", "/api/owner/clients/c1/purchases/v1", headers={**P, "X-FidClic-Store": "lib"}, json={"amount_paid": 3}).status_code == 403)
+    check("…a PALISSY visit of the same client → 200",
+          http("PUT", "/api/owner/clients/c1/purchases/v2", headers={**P, "X-FidClic-Store": "lib"}, json={"amount_paid": 22}).status_code == 200)
+    check("the owner, the LIBERTÉ visit → 200", http("PUT", "/api/owner/clients/c1/purchases/v1", headers=O, json={"amount_paid": 29}).status_code == 200)
+    check("v1 still 29 €, total still 51 €", visit("v1")["amount_paid"] == 29.0 and cust("c1")["total_amount_paid"] == 51.0)
+
+    print("\n7c. The visit vanished between the read and the write (edit ∥ delete race, load test 2026-11-26)")
+    from features import visit_edit as VE
+    real_visit = VE._visit
+    VE._visit = lambda tid, cid, vid: {**real_visit(tid, cid, "v1"), "id": "ghost"}
+    try:
+        r = http("PUT", "/api/owner/clients/c1/purchases/ghost", headers=O, json={"amount_paid": 500})
+    finally:
+        VE._visit = real_visit
+    check(f"→ 404, not a silent write ({r.status_code})", r.status_code == 404)
+    check("the client's total did not move, no history row", cust("c1")["total_amount_paid"] == 51.0
+          and not any(h.get("visit_id") == "ghost" for h in hist("c1")))
+
     print("\n8. Deleting a purchase takes back what it gave")
     r = http("POST", "/api/owner/clients/c1/purchases/v3/cancel", headers=O, json={"reason": "Doublon"})
     d = r.json()
@@ -278,6 +301,19 @@ def main():
     check("another account → 404", http("POST", "/api/owner/clients/c1/purchases/v1/cancel",
                                         headers=tok("z@x.fr", "business_owner", "t2"), json={}).status_code == 404)
     check("the other shop's visit is still there", visit("vz") is not None and cust("z1")["total_amount_paid"] == 99.0)
+
+    print("\n9. A palier is never taken back (pentest 2026-11-26)")
+    db.customers.insert_one({"id": "c4", "tenant_id": "t1", "name": "Gold", "barcode_id": "FT-GOLD0001", "branch_id": "lib",
+                             "visits": 12, "points": 0, "total_amount_paid": 300.0, "tier": "gold", "tier_best": "gold"})
+    db.visits.insert_one({"id": "v6", "tenant_id": "t1", "customer_id": "c4", "branch_id": "lib", "amount_paid": 10.0,
+                          "points_awarded": 0, "stamps_awarded": 1, "visit_time": now})
+    r = http("PUT", "/api/owner/clients/c4/purchases/v6", headers=O, json={"amount_paid": 11})
+    check(f"a gold client, one visit 10 € → 11 €: still gold ({r.json().get('client', {}).get('tier')})",
+          r.status_code == 200 and r.json()["client"]["tier"] == "gold" and cust("c4")["tier"] == "gold")
+    r = http("PUT", "/api/owner/clients/c4/purchases/v6", headers=O, json={"visit_time": "2026-10-01T10:00:00Z"})
+    check("…a date change: still gold", cust("c4")["tier"] == "gold")
+    http("POST", "/api/owner/clients/c4/purchases/v6/cancel", headers=O, json={})
+    check("…deleted: still gold (tier_best kept)", cust("c4")["tier"] == "gold")
 
     print(f"\n{passed} passed, {failed} failed")
     return failed == 0
