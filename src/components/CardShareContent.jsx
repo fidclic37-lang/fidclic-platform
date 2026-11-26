@@ -2,6 +2,8 @@ import React, { useEffect, useState } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
 import { Copy, Check, Share2, Mail, MessageSquare } from 'lucide-react';
 import api from '../lib/api';
+import { ParrainageFull, useParrainages } from './CardParrainage';
+import { showRewards } from '../lib/parrainage';
 
 /* « Parrainage » inside « Ma carte en ligne » (round 4, user 2026-11-26: no
    page opens another page) — the home's « Parrainer un proche » and the old
@@ -32,6 +34,7 @@ export default function CardShareContent({ barcodeId, qrInk = '#111111' }) {
   const url = `${window.location.origin}/card/${encodeURIComponent(bc)}`;
   const [inv, setInv] = useState(null);
   const [copied, setCopied] = useState(false);
+  const parr = useParrainages(bc);           // « Mes parrainages » (2026-11-26)
 
   useEffect(() => {
     let alive = true;
@@ -50,15 +53,21 @@ export default function CardShareContent({ barcodeId, qrInk = '#111111' }) {
   const native = async () => {
     try { await navigator.share({ title: shop || 'Ma carte de fidélité', text, url }); } catch (_e) { /* cancelled */ }
   };
+  // « Inviter un ami »: the phone's share sheet when it has one, else the QR and the apps below
+  const invite = () => {
+    if (typeof navigator !== 'undefined' && navigator.share) { native(); return; }
+    document.getElementById('wcp-share-qr')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  };
 
   return (
     <div className="share" data-testid="share-view">
-      <section className="sheet sec" style={{ textAlign: 'center' }}>
+      <ParrainageFull data={parr} onInvite={invite} />
+      <section className="sheet sec" id="wcp-share-qr" style={{ textAlign: 'center' }}>
         <h2 className="sh-t" style={{ justifyContent: 'center' }}>
           {inv?.first_name && <span translate="no" className="notranslate">{inv.first_name}, </span>}
           {inv?.first_name ? 'partagez' : 'Partagez'} votre carte{inv?.enabled ? ' et obtenez des récompenses' : ''}
         </h2>
-        {reward && (
+        {reward && !showRewards(parr) && (
           <p className="sh-d" data-testid="share-reward">
             Pour chaque ami qui crée sa carte{inv?.minimum_visits > 1 ? ` et vient ${inv.minimum_visits} fois` : ' et vient en boutique'} : <b>{reward}</b> pour vous.
           </p>

@@ -1068,7 +1068,7 @@ const CardView = () => {
     <>
       {tabHead(`Vos offres${firstName ? `, ${firstName}` : ''}`)}
       <div className="stack" data-testid="offers-tab">
-        <CardOffersContent data={data} />
+        <CardOffersContent data={data} barcodeId={barcodeId} onParrainage={() => goTab('parrainage')} />
       </div>
     </>
   );
