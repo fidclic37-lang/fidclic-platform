@@ -4,6 +4,7 @@ import api from '../lib/api';
 import { cycleVisits, rewardsPending } from '../lib/cardCycle';
 import { liveOffers, personal, rewardPic, badgeKind, sectorLook } from '../lib/cardOffers';
 import { pointsBox } from '../lib/cardPage';
+import { ParrainageMini, useParrainages } from './CardParrainage';
 
 /**
  * « Vos offres » inside « Ma carte en ligne » — the bottom « Récompenses » tab
@@ -73,7 +74,7 @@ function OfferRow({ item, who, sector, onOpen }) {
   );
 }
 
-export default function CardOffersContent({ data }) {
+export default function CardOffersContent({ data, barcodeId, onParrainage }) {
   const [open, setOpen] = useState(null);
   const [all, setAll] = useState(false);
   // offers still valid, newest first; the shop's own offer leads — the list
@@ -95,6 +96,8 @@ export default function CardOffersContent({ data }) {
     }
   };
   const defis = data?.defis || {};
+  // « Mes parrainages » in short (the Wallet's rewards button lands here, 2026-11-26)
+  const parr = useParrainages(onParrainage ? (barcodeId || customer.barcode_id) : '');
 
   return (
     <>
@@ -138,6 +141,8 @@ export default function CardOffersContent({ data }) {
           <p className="pend" data-testid="offers-pending">🎉 {pending > 1 ? `${pending} récompenses vous attendent` : 'Une récompense vous attend'} en caisse</p>
         )}
       </section>
+
+      {onParrainage && <ParrainageMini data={parr} onOpen={onParrainage} />}
 
       <section className="sheet offers" id="wcp-offres" aria-labelledby="wcp-offers-h" data-testid="offers-list">
         <div className="ah">

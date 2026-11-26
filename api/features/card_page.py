@@ -751,6 +751,76 @@ def activity(cust: Dict[str, Any], limit: int = DEFAULT_LIMIT, before: Any = Non
     return {"items": page, "next": nxt}
 
 
+PARRAINAGES_MAX = 50
+
+
+def _reward_words(r: Dict[str, Any]) -> Dict[str, Any]:
+    from features import referrals as _R
+    out = {"kind": r.get("kind"), "label": _R.label(r)}
+    if r.get("kind") == "offer":
+        out["text"] = r.get("text") or ""
+    else:
+        out["n"] = int(r.get("n") or 0)
+    return out
+
+
+def parrainages(cust: Dict[str, Any], limit: int = PARRAINAGES_MAX) -> Dict[str, Any]:
+    """« Mes parrainages » (user, 2026-11-26): what the shop gives each side,
+    and every friend this card invited — « rewarded » once the friend came
+    and both were paid (referrer_pending False), « pending » before, with the
+    friend's visits out of the owner's « visites avant validation ». The
+    amounts are what each row paid (referrals.given), never today's setting.
+    A friend is a first name only."""
+    from features import referrals as _R
+    tid, cid = cust["tenant_id"], cust["id"]
+    cfg = _db.referral_config.find_one({"tenant_id": tid}) or {}
+    mode = cfg.get("reward_mode") if cfg.get("reward_mode") in _R.REWARD_MODES else "once"
+    need = max(1, int(cfg.get("minimum_visits_to_earn", 1) or 1))
+    me, friend = _reward_words(_R.reward_of(cfg, "referrer")), _reward_words(_R.reward_of(cfg, "referee"))
+    if mode == "first_then":
+        me["next_label"] = _R.label(_R.reward_of(cfg, "referrer", "next"))
+        friend["next_label"] = _R.label(_R.reward_of(cfg, "referee", "next"))
+
+    q = {"tenant_id": tid, "referrer_customer_id": cid}
+    proj = {"_id": 0, "referee_customer_id": 1, "referrer_pending": 1, "created_at": 1, "settled_at": 1,
+            "rewarded_visits": 1, "referrer_points": 1, "referrer_given": 1, "referrer_reward_promised": 1}
+    rows = list(_db.referral_redemptions.find(q, proj))
+    rows.sort(key=lambda d: _aware(d.get("created_at")) or datetime.min.replace(tzinfo=timezone.utc), reverse=True)
+    earned = _R._zero()
+    for d in rows:
+        earned = _R._add(earned, _R.given(d, "referrer", cfg))
+    rewarded = sum(1 for d in rows if not d.get("referrer_pending", True))
+
+    page = rows[:limit]
+    ids = [d.get("referee_customer_id") for d in page if d.get("referee_customer_id")]
+    people = {c["id"]: c for c in _db.customers.find({"tenant_id": tid, "id": {"$in": ids}},
+                                                     {"_id": 0, "id": 1, "name": 1, "visits": 1})} if ids else {}
+    friends = []
+    for d in page:
+        f = people.get(d.get("referee_customer_id")) or {}
+        done = not d.get("referrer_pending", True)
+        row = {"first_name": first_name(f.get("name")), "status": "rewarded" if done else "pending",
+               "joined_at": iso(_aware(d.get("created_at"))), "need": need,
+               "visits": min(int(f.get("visits") or 0), need)}
+        if done:
+            got = _R.given(d, "referrer", cfg)
+            row.update(rewarded_at=iso(_aware(d.get("settled_at"))), given=_R.words(got),
+                       times=max(1, int(d.get("rewarded_visits") or 1)))
+        friends.append(row)
+    return {"enabled": bool(cfg.get("enabled", False)), "mode": mode, "need": need,
+            "me": me, "friend": friend,
+            "invited": len(rows), "rewarded": rewarded, "pending": len(rows) - rewarded,
+            "earned": earned, "earned_label": _R.words(earned),
+            "friends": friends, "more": max(0, len(rows) - len(page))}
+
+
+@router.get("/api/card/{barcode_id}/parrainages")
+def card_parrainages(barcode_id: str, request: Request):
+    import server as core
+    cust, _who, _stores = core._card_access(barcode_id, request)
+    return parrainages(cust)
+
+
 @router.get("/api/card/{barcode_id}/activity")
 def card_activity(barcode_id: str, request: Request, limit: Optional[int] = Query(None),
                   before: Optional[str] = Query(None, max_length=MAX_BEFORE)):
