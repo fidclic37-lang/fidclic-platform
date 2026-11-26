@@ -44,11 +44,17 @@ export default function PurchaseEdit({ clientId, row, catalogue, onClose, onSave
   const linesChanged = !sameLines(lines, original);
   const hasStale = lines.some((l) => l.stale);
   const cat = catalogue || [];
-  const matches = useMemo(() => {
+  // the WHOLE catalogue, by category, as the Scan page's picker (user,
+  // 2026-11-26): the list scrolls inside its box so the amount and the
+  // buttons below never leave the screen
+  const groups = useMemo(() => {
     const s = q.trim().toLowerCase();
     const pool = s ? cat.filter((p) => p.name.toLowerCase().includes(s) || (p.category || '').toLowerCase().includes(s)) : cat;
-    return pool.slice(0, s ? 8 : 6);
+    const m = new Map();
+    pool.forEach((p) => { const k = (p.category || '').trim() || 'Autres'; if (!m.has(k)) m.set(k, []); m.get(k).push(p); });
+    return [...m.entries()];
   }, [q, cat]);
+  const qtyOf = (id) => lines.find((l) => l.item_id === id)?.qty || 0;
 
   const bump = (i, d) => setLines((ls) => ls.map((l, j) => (j === i ? { ...l, qty: Math.max(0, Math.min(999, l.qty + d)) } : l)).filter((l) => l.qty > 0));
   const remove = (i) => setLines((ls) => ls.filter((_l, j) => j !== i));
@@ -140,16 +146,32 @@ export default function PurchaseEdit({ clientId, row, catalogue, onClose, onSave
         {cat.length === 0 ? (
           <p className="mt-1.5 text-[12px] text-[#64748B]">Votre catalogue est vide : ajoutez vos produits dans « Catalogue produits » pour les choisir ici.</p>
         ) : (
-          <ul className="mt-1.5 flex flex-wrap gap-1.5" aria-label="Produits du catalogue">
-            {matches.map((p) => (
-              <li key={p.id}>
-                <button type="button" onClick={() => add(p)} className={`${btn} border border-[#DCE7FB] bg-white px-3 text-[13px] text-[#1E3A8A] hover:bg-[#EEF3FB]`}>
-                  {p.name} <span className="ml-1.5 text-[12px] font-normal text-[#64748B]">{eur(p.price)}</span>
-                </button>
-              </li>
-            ))}
-            {q.trim() && matches.length === 0 && <li className="text-[12px] text-[#64748B]">Aucun produit ne correspond.</li>}
-          </ul>
+          <div className="mt-1.5 max-h-72 overflow-y-auto rounded-lg border border-[#E2E8F0] bg-white">
+            <ul aria-label="Produits du catalogue">
+              {groups.map(([category, items]) => (
+                <React.Fragment key={category}>
+                  <li role="presentation" className="sticky top-0 z-[1] border-b border-[#F1F5F9] bg-[#F8FAFC] px-3 py-1.5 text-[11px] font-bold uppercase tracking-wider text-[#64748B]">
+                    {category}
+                  </li>
+                  {items.map((p) => {
+                    const n = qtyOf(p.id);
+                    return (
+                      <li key={p.id}>
+                        <button type="button" onClick={() => add(p)}
+                                className="flex min-h-[44px] w-full items-center gap-3 border-b border-[#F1F5F9] px-3 py-2 text-left hover:bg-[#F4F7FC] last:border-b-0">
+                          <span className="min-w-0 flex-1 truncate text-[14px] text-[#0B1C3F]">{p.name}</span>
+                          {n > 0 && <span className="rounded-full bg-[#2F6BFF] px-2 py-0.5 text-[11.5px] font-bold text-white" aria-label={`${n} dans cet achat`}>× {n}</span>}
+                          <span className="w-20 shrink-0 text-right font-mono text-[13px] text-[#475569]">{eur(p.price)}</span>
+                          <Plus size={16} className="shrink-0 text-[#10A36B]" />
+                        </button>
+                      </li>
+                    );
+                  })}
+                </React.Fragment>
+              ))}
+              {q.trim() && groups.length === 0 && <li className="px-3 py-3 text-[12px] text-[#64748B]">Aucun produit ne correspond.</li>}
+            </ul>
+          </div>
         )}
       </div>
 
