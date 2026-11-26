@@ -777,6 +777,9 @@ export const ownerAPI = {
   // Clients › « Modifier la fiche » / « Ajuster points / tampons » (features/customer_edit.py)
   clientFiche: (id) => api.get(`/owner/clients/${id}/fiche`),
   clientPurchases: (id, params) => api.get(`/owner/clients/${id}/purchases`, { params }),
+  // Historique d'achats › Modifier / Supprimer un achat (features/visit_edit)
+  editClientPurchase: (id, visitId, body) => api.put(`/owner/clients/${id}/purchases/${encodeURIComponent(visitId)}`, body),
+  cancelClientPurchase: (id, visitId, body) => api.post(`/owner/clients/${id}/purchases/${encodeURIComponent(visitId)}/cancel`, body || {}),
   clientProfil: (id) => api.get(`/owner/clients/${id}/profil`),
   // Profil client › « Carte Wallet »: one card's whole Wallet chain (features/wallet_passes.client_wallet)
   clientWallet: (id) => api.get(`/owner/clients/${id}/wallet`),

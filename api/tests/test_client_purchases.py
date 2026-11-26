@@ -83,7 +83,8 @@ def main():
     check("newest first, with the day and hour", [x["id"] for x in d["rows"]] == ["v2", "v3", "v1"]
           and d["rows"][0]["at"].startswith("2026-10-14T16:30"))
     check("products with quantities and line totals", d["rows"][0]["items"] == [
-        {"name": "Coupe", "qty": 1, "total": 22.0}, {"name": "Barbe express", "qty": 1, "total": 15.0}])
+        {"item_id": "i2", "name": "Coupe", "qty": 1, "price": 22.0, "total": 22.0},
+        {"item_id": "i3", "name": "Barbe express", "qty": 1, "price": 15.0, "total": 15.0}])
     check("the establishment where it was scanned", d["rows"][0]["store"] == "PALISSY" and d["rows"][2]["store"] == "LIBERTÉ")
     check("an amount typed without products: no lines, the amount", d["rows"][1]["items"] == [] and d["rows"][1]["amount"] == 12.0)
     check(f"the card's unit and what each visit gave ({d['unit']})", d["unit"] == "stamps" and d["rows"][0]["stamps"] == 1)

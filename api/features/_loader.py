@@ -57,6 +57,7 @@ MODULES = [
     "features.support_center",
     # Clients › « Modifier la fiche » / « Ajuster points / tampons » (QA UX04)
     "features.customer_edit",
+    "features.visit_edit",           # Clients › Historique d'achats › Modifier / Supprimer un achat
     "features.card_status",          # card active / deleted, and getting it back
     "features.google_wallet_callbacks",  # Google Wallet tells us of saves and deletions
     "features.samsung_wallet",       # Samsung Wallet: card data, card state, update notifications

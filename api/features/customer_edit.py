@@ -344,24 +344,16 @@ def get_purchases(customer_id: str, page: int = Query(1), per_page: int = Query(
         if at is not None:
             first = at if first is None or at < first else first
             last = at if last is None or at > last else last
-    t = _db.tenants.find_one({"id": tid}, {"_id": 0, "branches": 1}) or {}
-    stores = {b.get("id"): b.get("name") for b in t.get("branches") or [] if b.get("id")}
-    rule = AH._card_rule(tid)
-    rows = []
-    for v in (_db.visits.find(q, {"_id": 0}).sort("visit_time", -1)
-              .skip((page - 1) * per_page).limit(per_page)):
-        at = v.get("visit_time")
-        rows.append({
-            "id": v.get("id"),
-            "at": at.isoformat() if isinstance(at, datetime) else at,
-            "store": stores.get(v.get("branch_id")) if len(stores) > 1 else None,
-            "items": [{"name": it.get("name") or "Produit", "qty": int(it.get("qty") or 1),
-                       "total": round(float(it.get("line_total") or 0), 2)} for it in v.get("items") or []],
-            "amount": None if v.get("amount_paid") is None else round(float(v.get("amount_paid") or 0), 2),
-            "points": int(v.get("points_awarded") or 0),
-            "stamps": AH._visit_stamps(v, rule),
-        })
+    stores, rule = _stores_and_rule(tid)
+    rows = [purchase_row(tid, v, stores, rule)
+            for v in (_db.visits.find(q, {"_id": 0}).sort("visit_time", -1)
+                      .skip((page - 1) * per_page).limit(per_page))]
     as_iso = lambda d: d.isoformat() if isinstance(d, datetime) else d  # noqa: E731
+    # the catalogue the editor picks from (features/visit_edit): active products, priced
+    cat = _db.tenant_catalog.find_one({"tenant_id": tid}, {"_id": 0, "items": 1}) or {}
+    catalogue = [{"id": it["id"], "name": it.get("name") or "Produit", "price": round(float(it.get("price") or 0), 2),
+                  "category": it.get("category") or ""}
+                 for it in cat.get("items") or [] if it.get("id") and it.get("active") is not False]
     return {
         "client": {"id": c["id"], "name": c.get("name") or "", "barcode_id": c.get("barcode_id")},
         "unit": AH.unit_of(tid),
@@ -369,6 +361,36 @@ def get_purchases(customer_id: str, page: int = Query(1), per_page: int = Query(
                    "average": round(spent / total, 2) if total else 0.0,
                    "first": as_iso(first), "last": as_iso(last)},
         "rows": rows, "page": page, "per_page": per_page, "pages": max(1, -(-total // per_page)),
+        "catalogue": catalogue,
+    }
+
+
+def _stores_and_rule(tid: str):
+    from features import activity_history as AH
+    t = _db.tenants.find_one({"id": tid}, {"_id": 0, "branches": 1}) or {}
+    stores = {b.get("id"): b.get("name") for b in t.get("branches") or [] if b.get("id")}
+    return stores, AH._card_rule(tid)
+
+
+def purchase_row(tid: str, v: Dict[str, Any], stores=None, rule=None) -> Dict[str, Any]:
+    """One line of « Historique d'achats » — also what the editor gets back
+    after a change (features/visit_edit)."""
+    from features import activity_history as AH
+    if stores is None or rule is None:
+        stores, rule = _stores_and_rule(tid)
+    at = v.get("visit_time")
+    return {
+        "id": v.get("id"),
+        "at": at.isoformat() if isinstance(at, datetime) else at,
+        "store": stores.get(v.get("branch_id")) if len(stores) > 1 else None,
+        "items": [{"item_id": it.get("item_id"), "name": it.get("name") or "Produit", "qty": int(it.get("qty") or 1),
+                   "price": round(float(it.get("price") or 0), 2),
+                   "total": round(float(it.get("line_total") or 0), 2)} for it in v.get("items") or []],
+        "amount": None if v.get("amount_paid") is None else round(float(v.get("amount_paid") or 0), 2),
+        "amount_manual": bool(v.get("amount_manual")),
+        "points": int(v.get("points_awarded") or 0),
+        "stamps": AH._visit_stamps(v, rule),
+        "edited": bool(v.get("edited_at")),
     }
 
 
