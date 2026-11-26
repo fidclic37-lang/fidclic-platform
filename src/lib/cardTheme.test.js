@@ -26,7 +26,7 @@ const hsl = (hex) => {
 };
 const hueNear = (a, b, tol) => Math.min(Math.abs(a - b), 360 - Math.abs(a - b)) <= tol;
 
-function assertReadable(t, why) {
+function assertReadable(t, why, { band = false } = {}) {
   for (const k of ['page', 'sheet', 'ink', 'muted', 'faint', 'line', 'soft', 'brand', 'brandInk', 'accent',
     'accentSoft', 'accentInk', 'btn', 'btnInk', 'banner', 'bannerInk', 'heroFade', 'ok', 'okSoft']) {
     assert.match(t[k], HEX, `${why}: ${k} is a hex colour (${t[k]})`);
@@ -36,12 +36,14 @@ function assertReadable(t, why) {
     assert.ok(r >= min, `${why}: ${fg} on ${bg} = ${r.toFixed(2)} < ${min}`);
   }
   // big numbers (34px) use brandInk; the bell dot / bar are graphics ≥ 3:1 is not required for the dot
-  assert.ok(contrast('#FFFFFF', t.heroFade) >= 4.5, `${why}: white greeting on heroFade`);
+  // the greeting: white on the dark fade (2026-11-25); on a card's own band (round 4) whichever reads
+  assert.ok(contrast(t.heroInk, t.heroFade) >= 4.5, `${why}: greeting ${t.heroInk} on heroFade ${t.heroFade}`);
+  if (!band) assert.equal(t.heroInk, '#ffffff', `${why}: white greeting on the dark fade`);
   // calm page: pale and not saturated
   const p = hsl(t.page);
   assert.ok(p.l >= 0.92, `${why}: page is light (${t.page})`);
   assert.ok(p.s <= 0.6, `${why}: page is not shouty (${t.page})`);
-  assert.ok(hsl(t.heroFade).l <= 0.2, `${why}: heroFade is dark (${t.heroFade})`);
+  if (!band) assert.ok(hsl(t.heroFade).l <= 0.2, `${why}: heroFade is dark (${t.heroFade})`);
   assert.ok(typeof t.bar === 'string' && t.bar.startsWith('linear-gradient('), `${why}: bar gradient`);
 }
 
@@ -91,8 +93,10 @@ test('black + gold (Royal Trim): warm page, dark button with gold ink, near-blac
 });
 
 test('graphite + bronze and olive + gold stay in their own hues', () => {
+  // round 4: the owner's footer colour IS the band under the photo (cardThemeMatch.test.js)
   const g = themeFromCard({ brand_color: '#1E1F22', poster_footer_color: '#8C7357', accent_color: '#B8946A' });
-  assertReadable(g, 'graphite+bronze');
+  assertReadable(g, 'graphite+bronze', { band: true });
+  assert.equal(g.heroFade, '#8c7357');
   assert.ok(hueNear(hsl(g.page).h, 32, 18), `bronze page (${g.page})`);
   const o = themeFromCard({ brand_color: '#6E7442', accent_color: '#BFA75F' });
   assertReadable(o, 'olive+gold');
@@ -211,7 +215,7 @@ test('white / grey cards take the photo too, and its dark under the photo', () =
 test('a chromatic card ignores the photo', () => {
   const card = { brand_color: '#1450B8', accent_color: '#F8B008' };
   assert.deepEqual(themeFromCard(card, GOLD), themeFromCard(card));
-  const accentOnly = { card_bg_color: '#15120E', poster_footer_color: '#B03A2E' };   // a red the owner set
+  const accentOnly = { card_bg_color: '#15120E', accent_color: '#B03A2E' };   // a red the owner set
   assert.deepEqual(themeFromCard(accentOnly, OLIVE), themeFromCard(accentOnly));
   const olive = { brand_color: '#6E7442' };
   assert.deepEqual(themeFromCard(olive, GOLD), themeFromCard(olive));

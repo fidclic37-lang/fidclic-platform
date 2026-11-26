@@ -88,6 +88,8 @@ test('a points card: photo, greeting, the programme\'s words, activities, networ
   const asked = await stage(page, bc, {
     card: { programme: 'points_euro', programme_kind: 'points_euro', points_mode: 'per_euro', points_per_euro: 10,
       reward_points: 1000, reward_description: 'Café offert', brand_color: '#1450B8', accent_color: '#F8B008',
+      // the Wallet card's own colours (GET /api/card → card.pass_colors, round 4): blue band, yellow labels
+      pass_colors: { background: '#1450b8', foreground: '#ffffff', label: '#f8b008', footer: '#1450b8', name: '#f8b008', poster: true },
       hero_photo_url: HERO, logo_url: LOGO, tagline: 'Votre fidélité, notre priorité',
       socials: [{ network: 'instagram', url: 'https://instagram.com/fidclic' }, { network: 'tiktok', url: 'https://www.tiktok.com/@fidclic' }],
       cta: { label: 'Prendre rendez-vous', url: 'https://www.planity.com/fidclic-tours' } },
@@ -129,6 +131,11 @@ test('a points card: photo, greeting, the programme\'s words, activities, networ
   const hello = await page.getByRole('heading', { name: 'Bonjour, Thomas !' }).boundingBox();
   const head = await hero.locator('header').boundingBox();
   expect(head.y + head.height / 2, 'shop name in the photo\'s top half').toBeLessThan(heroBox.y + heroBox.height / 2);
+  // round 4 (user, 2026-11-26): compact, in the TOP-LEFT corner right under the status bar
+  const brand = await hero.getByTestId('hero-brand').locator('.brand').boundingBox();
+  expect(brand.y - heroBox.y, 'right under the top edge').toBeLessThan(24);
+  expect(brand.x - heroBox.x, 'at the left edge').toBeLessThan(24);
+  expect(brand.height, 'compact').toBeLessThan(48);
   expect(hello.y + hello.height / 2, 'greeting in the photo\'s bottom half').toBeGreaterThan(heroBox.y + heroBox.height / 2);
   expect(heroBox.height, 'hero about the mockup\'s height').toBeGreaterThan(290);
   expect(heroBox.height).toBeLessThan(400);
@@ -144,8 +151,10 @@ test('a points card: photo, greeting, the programme\'s words, activities, networ
   const boxTop = (await box.boundingBox()).y;
   expect(heroBox.y + heroBox.height - boxTop, 'the box overlaps the photo').toBeGreaterThan(30);
 
-  await expect(page.getByRole('link', { name: /Mes offres exclusives/ })).toHaveAttribute('href', `/card/${bc}/offres`);
-  await expect(page.getByRole('link', { name: /Parrainer un proche/ })).toHaveAttribute('href', `/card/${bc}/partager`);
+  // round 4: both tiles stay in this page (no link to another page)
+  await expect(page.getByRole('button', { name: /Mes offres exclusives/ })).toBeVisible();
+  await expect(page.getByRole('button', { name: /Parrainer un proche/ })).toBeVisible();
+  await expect(page.locator(`a[href*="/card/${bc}/offres"], a[href*="/card/${bc}/partager"]`)).toHaveCount(0);
   // the 3rd tile: the store's button (super admin), opened in a new tab
   const cta = page.getByTestId('card-cta');
   await expect(cta).toHaveText(/Prendre rendez-vous/);
@@ -185,8 +194,9 @@ test('a points card: photo, greeting, the programme\'s words, activities, networ
     await expect(say).toBeHidden({ timeout: 6000 });
   }
 
-  // its own colours: FidClic blue button, dark-blue fade under the photo, a pale blue page
+  // its own colours: the card's blue band = the button and the fade under the photo, a pale blue page
   expect((await cssVar(page, '--btn')).toLowerCase()).toBe('#1450b8');
+  expect((await cssVar(page, '--hero-fade')).toLowerCase()).toBe('#1450b8');
   expect((await cssVar(page, '--accent')).toLowerCase()).toBe('#f8b008');
   const page_ = await cssVar(page, '--page');
   expect(parseInt(page_.slice(1, 3), 16), `a pale page (${page_})`).toBeGreaterThan(225);
@@ -310,9 +320,13 @@ test('no « Ma carte » anywhere; the bottom bar is Accueil · Historique · Ré
   await noMaCarte();
   expect(await noSideScroll(page)).toBeLessThanOrEqual(0);
 
-  // Récompenses is a link to « Vos offres » (user, 2026-11-25) — not a tab
-  await expect(page.getByRole('tab', { name: 'Récompenses' })).toHaveCount(0);
-  await expect(nav.getByRole('link', { name: 'Récompenses' })).toHaveAttribute('href', `/card/${bc}/offres`);
+  // Récompenses: « Vos offres » as a tab of this page (round 4, user 2026-11-26)
+  await expect(nav.getByRole('link')).toHaveCount(0);
+  await tab('Récompenses').click();
+  await expect(page).toHaveURL(/onglet=recompenses/);
+  await expect(tab('Récompenses')).toHaveAttribute('aria-selected', 'true');
+  await expect(page.getByTestId('offers-tab')).toBeVisible();
+  await noMaCarte();
 
   // Mon compte: paramètres, avis, à propos, RGPD
   await tab('Mon compte').click();
@@ -328,6 +342,8 @@ test('no « Ma carte » anywhere; the bottom bar is Accueil · Historique · Ré
   expect(await noSideScroll(page)).toBeLessThanOrEqual(0);
 
   // the back button walks the tabs back
+  await page.goBack();
+  await expect(tab('Récompenses')).toHaveAttribute('aria-selected', 'true');
   await page.goBack();
   await expect(tab('Historique')).toHaveAttribute('aria-selected', 'true');
   await page.goBack();
@@ -365,17 +381,107 @@ test('the store\'s button and the networks render text, never markup', async ({ 
   expect(dialogs).toEqual([]);
 });
 
-test('the bottom « Récompenses » opens « Vos offres » of this card, and « Voir ma carte » comes back', async ({ page, request }) => {
+test('the bottom « Récompenses » shows « Vos offres » IN the card page, Accueil comes back', async ({ page, request }) => {
   const made = await newCard(request, 'Lien Recompenses');
   const bc = made.barcode_id;
+  await stage(page, bc, {
+    card: { reward_description: 'Un café offert', reward_threshold: 10 },
+    customer: { rewards_pending: 1 },
+    extra: {
+      offers: [{ id: 'o1', kind: 'campaign', title: 'Bonjour {prenom} : -20 %', body: 'Sur tout, ce week-end https://example.org/o', sent_at: daysAgo(1),
+        image_url: '/e2e-assets/hero.svg' }],
+      defis: { running: [{ id: 'd1', title: 'Défi de décembre', target: 3, progress: 1, end_date: '2026-12-31', reward: 'Un dessert' }],
+        won: [{ id: 'w1', kind: 'parrainage', reward: 'Une boisson', expires_at: '2026-12-20' }] },
+    },
+  });
+  const pixel = [];
+  const clicks = [];
+  page.on('request', (r) => {
+    const u = new URL(r.url());
+    if (/\/api\/campaigns\/o1\/pixel\//.test(u.pathname)) pixel.push(u.pathname);
+    if (/\/api\/campaigns\/o1\/track-click/.test(u.pathname)) clicks.push(u.pathname);
+  });
   await page.goto(`/card/${bc}?k=${made.card_key}`);
   await expect(page.getByRole('heading', { name: /Bonjour/ })).toBeVisible();
-  await page.getByRole('navigation', { name: 'Ma carte en ligne' }).getByRole('link', { name: 'Récompenses' }).click();
-  await expect(page).toHaveURL(new RegExp(`/card/${bc}/offres$`));
+  const nav = page.getByRole('navigation', { name: 'Ma carte en ligne' });
+  await nav.getByRole('tab', { name: 'Récompenses' }).click();
+  await expect(page).toHaveURL(new RegExp(`/card/${bc}\\?onglet=recompenses$`));
   await expect(page.getByRole('heading', { name: /^Vos offres/ })).toBeVisible();
-  await page.getByRole('link', { name: 'Voir ma carte' }).click();
+  await expect(nav, 'the bottom bar stays').toBeVisible();
+  await expect(page.getByTestId('offers-reward')).toContainText('Un café offert');
+  await expect(page.getByTestId('offers-pending')).toContainText('Une récompense vous attend');
+  await expect(page.getByTestId('defi-running')).toContainText('Défi de décembre');
+  await expect(page.getByTestId('defi-won')).toContainText('Une boisson');
+  const row = page.getByTestId('offer-row');
+  await expect(row).toHaveCount(1);
+  await expect(row).toContainText('Bonjour Lien : -20 %');
+  // the offer's sheet: its photo, its words, the open counted (pixel), the link counted (click)
+  await row.click();
+  const sheet = page.getByTestId('offer-sheet');
+  await expect(sheet).toBeVisible();
+  await expect(sheet.getByRole('heading')).toHaveText('Bonjour Lien : -20 %');
+  await expect.poll(() => pixel.length).toBe(1);
+  const go = sheet.getByRole('link', { name: /En profiter/ });
+  await expect(go).toHaveAttribute('href', 'https://example.org/o');
+  await expect(go).toHaveAttribute('rel', 'noopener noreferrer');
+  await page.context().route('https://example.org/**', (r) => r.fulfill({ body: 'ok' }));
+  await go.click();
+  await expect.poll(() => clicks.length).toBe(1);
+  await sheet.getByRole('button', { name: 'Fermer' }).click();
+  await expect(sheet).toHaveCount(0);
+  // themed: the offers panel paints with the card's own variables
+  const shown = await page.getByTestId('offers-reward').evaluate((el) => getComputedStyle(el.querySelector('.pic')).backgroundColor);
+  const btn = await cssVar(page, '--btn');
+  const hex = (rgb) => `#${rgb.match(/\d+/g).slice(0, 3).map((n) => Number(n).toString(16).padStart(2, '0')).join('')}`;
+  expect(hex(shown)).toBe(btn.toLowerCase());
+  expect(await noSideScroll(page)).toBeLessThanOrEqual(0);
+  await shots(page, 'card-online-recompenses-tab');
+  await nav.getByRole('tab', { name: 'Accueil' }).click();
   await expect(page).toHaveURL(new RegExp(`/card/${bc}$`));
   await expect(page.getByRole('tab', { name: 'Accueil' })).toHaveAttribute('aria-selected', 'true');
+  // « Mes offres exclusives » → the same tab, at its offers
+  await page.getByRole('button', { name: /Mes offres exclusives/ }).click();
+  await expect(page).toHaveURL(/onglet=recompenses/);
+  await expect(page.getByTestId('offers-list')).toBeInViewport();
+});
+
+test('« Parrainer un proche » → the Parrainage view in the card page, the old /partager address too', async ({ page, request }) => {
+  const made = await newCard(request, 'Vue Parrainage');
+  const bc = made.barcode_id;
+  const asked = await stage(page, bc, {});
+  await page.goto(`/card/${bc}?k=${made.card_key}`);
+  await expect(page.getByRole('heading', { name: /Bonjour/ })).toBeVisible();
+  await page.getByRole('button', { name: /Parrainer un proche/ }).click();
+  await expect(page).toHaveURL(new RegExp(`/card/${bc}\\?onglet=parrainage$`));
+  const view = page.getByTestId('share-view');
+  await expect(view).toBeVisible();
+  await expect(page.getByRole('heading', { level: 1 })).toHaveText('Parrainage');
+  await expect(view).toContainText('partagez votre carte');
+  await expect(view.getByTestId('share-qr').locator('svg')).toBeVisible();
+  const url = `${new URL(page.url()).origin}/card/${bc}`;
+  await expect(view.getByTestId('share-url')).toHaveText(url);
+  const wa = await view.getByRole('link', { name: 'Partager sur WhatsApp' }).getAttribute('href');
+  expect(decodeURIComponent(wa)).toContain(url);
+  expect(wa, 'never the owner key').not.toContain(made.card_key);
+  // the bottom bar stays, no item lit (a hidden view), a way back
+  const nav = page.getByRole('navigation', { name: 'Ma carte en ligne' });
+  await expect(nav).toBeVisible();
+  await expect(page.locator('.wcp-nav [aria-selected="true"]')).toHaveCount(0);
+  expect(asked.filter((a) => a === `GET /api/card/${bc}/inviter`)).toHaveLength(1);
+  expect(asked.filter((a) => a === `GET /api/card/${bc}`), 'the card is not asked again').toHaveLength(1);
+  await shots(page, 'card-online-parrainage-view');
+  expect(await noSideScroll(page)).toBeLessThanOrEqual(0);
+  await page.getByRole('button', { name: 'Retour' }).click();
+  await expect(page.getByRole('tab', { name: 'Accueil' })).toHaveAttribute('aria-selected', 'true');
+  // the old address (Wallet back, SMS): the same view of the card page, the key kept on the phone
+  await page.goto(`/card/${bc}/partager`);
+  await expect(page).toHaveURL(new RegExp(`/card/${bc}\\?onglet=parrainage$`));
+  await expect(page.getByTestId('share-view')).toBeVisible();
+  await expect(page.getByTestId('card-page')).toBeVisible();
+  // and /offres with the owner key (the Wallet tile)
+  await page.goto(`/card/${bc}/offres?k=${made.card_key}`);
+  await expect(page).toHaveURL(new RegExp(`/card/${bc}\\?onglet=recompenses$`));
+  await expect(page.getByRole('tab', { name: 'Récompenses' })).toHaveAttribute('aria-selected', 'true');
 });
 
 test('the Wallet « Avantages membres » tile (?onglet=programme) still opens the programme view', async ({ page, request }) => {
@@ -387,9 +493,9 @@ test('the Wallet « Avantages membres » tile (?onglet=programme) still opens th
     customer: { points: 25, rewards_pending: 1 },
     extra: { defis: { running: [{ id: 'd1', title: 'Défi de novembre', target: 3, progress: 1, end_date: '2026-12-31', reward: 'Un café' }], won: [] } },
   });
-  for (const view of ['programme', 'recompenses']) {
-    await page.goto(`/card/${bc}?onglet=${view}&k=${made.card_key}`);
-    const panel = page.getByRole('tabpanel', { name: 'Récompenses' });
+  {
+    await page.goto(`/card/${bc}?onglet=programme&k=${made.card_key}`);
+    const panel = page.getByRole('tabpanel', { name: 'Le programme' });
     await expect(panel).toContainText('Le programme');
     await expect(page.getByTestId('programme-earning')).toContainText('2 pts par euro dépensé');
     await expect(page.getByTestId('programme-progress')).toContainText('Débloquée dès 100 points — 25 / 100');

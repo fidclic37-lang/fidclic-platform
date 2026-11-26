@@ -36,24 +36,27 @@ test('the owner reviewing a client: « Mes offres » and back stays on THAT clie
   await expect(page.getByText('Client', { exact: false }).first()).toBeVisible();
   await expect(page).toHaveURL(new RegExp(`/card/${client.barcode_id}`));
 
-  // the bottom « Récompenses » (a link to « Vos offres » since 2026-11-25) keeps the owner's view too
-  await expect(page.getByRole('navigation', { name: 'Ma carte en ligne' }).getByRole('link', { name: 'Récompenses' }))
-    .toHaveAttribute('href', `/card/${client.barcode_id}/offres?vue=commerce`);
-  await page.getByRole('link', { name: /Mes offres/ }).click();
-  await expect(page).toHaveURL(new RegExp(`/card/${client.barcode_id}/offres\\?vue=commerce`));
+  // round 4: « Récompenses » and « Mes offres » are views of THIS page — the owner's view stays on
+  const nav = page.getByRole('navigation', { name: 'Ma carte en ligne' });
+  await expect(nav.getByRole('link')).toHaveCount(0);
+  await page.getByRole('button', { name: /Mes offres/ }).click();
+  await expect(page).toHaveURL(new RegExp(`/card/${client.barcode_id}\\?vue=commerce&onglet=recompenses$`));
+  await expect(page.getByRole('heading', { name: /^Vos offres, Client/ })).toBeVisible();
 
-  await page.getByRole('link', { name: 'Voir ma carte' }).click();
+  await nav.getByRole('tab', { name: 'Accueil' }).click();
   await page.waitForLoadState('networkidle');
-  await expect(page, 'still the client the owner opened').toHaveURL(new RegExp(`/card/${client.barcode_id}\\?vue=commerce`));
+  await expect(page, 'still the client the owner opened').toHaveURL(new RegExp(`/card/${client.barcode_id}\\?vue=commerce$`));
   await page.waitForTimeout(1000);                              // a redirect would have happened by now
   expect(page.url()).not.toContain(mine.barcode_id);
 
-  // the back arrow too
-  await page.getByRole('link', { name: /Mes offres/ }).click();
-  await page.getByRole('link', { name: 'Retour à ma carte' }).click();
+  // the parrainage view, and the old /offres address of that client, keep it too
+  await page.getByRole('button', { name: /Parrainer un proche/ }).click();
+  await expect(page).toHaveURL(new RegExp(`/card/${client.barcode_id}\\?vue=commerce&onglet=parrainage$`));
+  await page.getByRole('button', { name: 'Retour' }).click();
+  await page.goto(`/card/${client.barcode_id}/offres?vue=commerce`);
   await page.waitForLoadState('networkidle');
   await page.waitForTimeout(1000);
-  expect(page.url()).toContain(`/card/${client.barcode_id}`);
+  expect(page.url()).toContain(`/card/${client.barcode_id}?vue=commerce&onglet=recompenses`);
   expect(page.url()).not.toContain(mine.barcode_id);
 
   // a customer's own phone is unchanged: scanning someone else's card of the

@@ -61,3 +61,50 @@ test('defaults to the current time', () => {
     camp('passe', '2026-11-24T09:00:00Z', { valid_until: '2000-01-01T00:00:00Z' })] };
   assert.deepEqual(liveOffers(data).map((o) => o.id), ['futur']);
 });
+
+// ---------------------------------------------------------------- round 4: the offers in the card page
+// (user, 2026-11-26) « Vos offres » is a tab of the card page now: its words
+// helpers live here, shared with the old page (kept unrouted for a rollback).
+import { personal, rewardPic, badgeKind, sectorLook } from './cardOffers.js';
+
+test('personal: every variable of the Campagnes wizard, missing values safe', () => {
+  const who = { name: 'Marie Dupont', points: 120, visits: 4, _shop: 'ROYAL TRIM', _reward: 'Une coupe', _missing: 6 };
+  assert.equal(personal('Bonjour {prenom} / {first_name} / {PRÉNOM}', who), 'Bonjour Marie / Marie / Marie');
+  assert.equal(personal('{nom} chez {nom_commerce}', who), 'Marie Dupont chez ROYAL TRIM');
+  assert.equal(personal('{points} pts, {visites} visites, {points_manquants} à faire : {prochaine_récompense}', who),
+    '120 pts, 4 visites, 6 à faire : Une coupe');
+  assert.equal(personal('{prochaine_recompense}', {}), 'votre récompense');
+  assert.equal(personal('{points} {visits} {points_remaining}', {}), '0 0 0');
+  assert.equal(personal('{prenom}', { name: '' }), '');
+  assert.equal(personal(null, who), '');
+  assert.equal(personal(undefined), '');
+  assert.equal(personal('{inconnu}', who), '{inconnu}', 'an unknown variable stays as written');
+  assert.equal(personal('<b>{prenom}</b>', { name: '<i>x</i> y' }), '<b><i>x</i></b>', 'text only: React escapes it');
+});
+
+test('rewardPic: the reward\'s words first, then the trade, then a gift', () => {
+  assert.equal(rewardPic('Un café offert', 'salon'), '☕');
+  assert.equal(rewardPic('Une coupe offerte', 'cafe'), '💇');
+  assert.equal(rewardPic('-10 % sur tout', 'cafe'), '🏷️');
+  assert.equal(rewardPic('Surprise', 'pizzeria'), '🍕');
+  assert.equal(rewardPic('', 'nimporte'), '🎁');
+  assert.equal(rewardPic(null, null), '🎁');
+});
+
+test('badgeKind: a discount, something free, or news', () => {
+  assert.equal(badgeKind({ title: '-20 % ce week-end' }), 'discount');
+  assert.equal(badgeKind({ title: 'Remise fidèle' }), 'discount');
+  assert.equal(badgeKind({ title: 'Café offert', body: '' }), 'gift');
+  assert.equal(badgeKind({ description: 'un dessert gratuit' }), 'gift');
+  assert.equal(badgeKind({ title: 'Nouvelle carte des vins' }), 'news');
+  assert.equal(badgeKind({}), 'news');
+  assert.equal(badgeKind(null), 'news');
+});
+
+test('sectorLook: an emoji and a picture tint per trade, a default otherwise', () => {
+  assert.equal(sectorLook('cafe')[0], '☕');
+  assert.equal(sectorLook('salon')[0], '💇');
+  assert.equal(sectorLook('nimporte')[0], '🎁');
+  assert.equal(sectorLook(undefined)[0], '🎁');
+  assert.equal(sectorLook('__proto__')[0], '🎁', 'no prototype key');
+});

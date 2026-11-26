@@ -12,6 +12,9 @@
  *           with its neighbours) gives the average colour of those three bins.
  *           null when under 3 % of the visible pixels have a colour (a grey photo).
  *   dark    the average of the photo's dark pixels (l < 0.2), or null.
+ *   band    the average colour of the photo's bottom quarter (2026-11-26): on an
+ *           iOS 27 poster card with no footer colour, Wallet draws the band
+ *           under the fields as Apple's blur of exactly that part of the photo.
  *
  * Transparent pixels (alpha < 128) never vote. Pure maths, no DOM: the thin
  * browser loader photoPalette(url) draws the photo the hero already loaded into
@@ -20,20 +23,27 @@
  * Tests: node --test src/lib/photoPalette.test.js
  */
 
-const EMPTY = Object.freeze({ accent: null, dark: null });
+const EMPTY = Object.freeze({ accent: null, dark: null, band: null });
+const BAND_SHARE = 0.25;
 const BINS = 36;
 const MIN_SHARE = 0.03;
 
 const hex2 = (x) => Math.max(0, Math.min(255, Math.round(x))).toString(16).padStart(2, '0');
 const toHex = (r, g, b) => `#${hex2(r)}${hex2(g)}${hex2(b)}`;
 
-/** { accent, dark } of an RGBA pixel buffer (Uint8ClampedArray or Array). */
+/** { accent, dark, band } of an RGBA pixel buffer (Uint8ClampedArray or Array). */
 export function paletteFromPixels(rgba, { width, height } = {}) {
   if (!rgba || typeof rgba !== 'object' || typeof rgba.length !== 'number') return { ...EMPTY };
   let n = Math.floor(rgba.length / 4);
   const w = Number(width), h = Number(height);
-  if (Number.isFinite(w) && Number.isFinite(h) && w > 0 && h > 0) n = Math.min(n, Math.floor(w) * Math.floor(h));
+  const sized = Number.isFinite(w) && Number.isFinite(h) && w >= 1 && h >= 1;
+  if (sized) n = Math.min(n, Math.floor(w) * Math.floor(h));
   if (n <= 0) return { ...EMPTY };
+  // the bottom quarter: whole rows when the size is known, else the last pixels (row order)
+  const bandFrom = sized && n === Math.floor(w) * Math.floor(h)
+    ? (Math.floor(h) - Math.max(1, Math.ceil(Math.floor(h) * BAND_SHARE))) * Math.floor(w)
+    : n - Math.max(1, Math.ceil(n * BAND_SHARE));
+  let bandN = 0, bR = 0, bG = 0, bB = 0;
 
   const binW = new Float64Array(BINS), binR = new Float64Array(BINS), binG = new Float64Array(BINS), binB = new Float64Array(BINS);
   let opaque = 0, chroma = 0, darkN = 0, dR = 0, dG = 0, dB = 0;
@@ -43,6 +53,7 @@ export function paletteFromPixels(rgba, { width, height } = {}) {
     if (!(a >= 128)) continue;
     const r = Number(rgba[o]) || 0, g = Number(rgba[o + 1]) || 0, b = Number(rgba[o + 2]) || 0;
     opaque += 1;
+    if (i >= bandFrom) { bandN += 1; bR += r; bG += g; bB += b; }
     const mx = Math.max(r, g, b) / 255, mn = Math.min(r, g, b) / 255;
     const l = (mx + mn) / 2, d = mx - mn;
     if (l < 0.2) { darkN += 1; dR += r; dG += g; dB += b; }
@@ -73,19 +84,21 @@ export function paletteFromPixels(rgba, { width, height } = {}) {
     if (W > 0) accent = toHex(R / W, G / W, B / W);
   }
   const dark = darkN / opaque >= MIN_SHARE ? toHex(dR / darkN, dG / darkN, dB / darkN) : null;
-  return { accent, dark };
+  const band = bandN ? toHex(bR / bandN, bG / bandN, bB / bandN) : null;
+  return { accent, dark, band };
 }
 
 // ---------------------------------------------------------------- browser loader
 
 const SIZE = 64;
 const TIMEOUT_MS = 8000;
-const KEY = 'fidclic:photo-palette:';
+const KEY = 'fidclic:photo-palette:v2:';     // v2: + band (an older entry has none)
 const mem = new Map();
 const HEX = /^#[0-9a-f]{6}$/;
 const clean = (v) => ({
   accent: typeof v?.accent === 'string' && HEX.test(v.accent) ? v.accent : null,
   dark: typeof v?.dark === 'string' && HEX.test(v.dark) ? v.dark : null,
+  band: typeof v?.band === 'string' && HEX.test(v.band) ? v.band : null,
 });
 
 /** Draw `src` into a small canvas: { ok, palette }. Never rejects. */
@@ -116,8 +129,8 @@ function read(src) {
 }
 
 /**
- * The palette of the photo at `url` — Promise of { accent, dark }, never
- * rejects; { accent: null, dark: null } outside a browser or when the photo
+ * The palette of the photo at `url` — Promise of { accent, dark, band }, never
+ * rejects; all null outside a browser or when the photo
  * cannot be read. A « /api/media/<id> » that Vercel Blob answers without CORS
  * is read once more from our own origin (?raw=1); the answer is kept for the
  * session, so a photo costs that at most once per visit.

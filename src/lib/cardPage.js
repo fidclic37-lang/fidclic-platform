@@ -138,20 +138,23 @@ export function pointsBox(card = {}, customer = {}) {
 
 // ---------------------------------------------------------------- tabs in the URL
 
-// The bottom bar (user, 2026-11-25): Accueil · Historique · Récompenses (a
-// link) · Mon compte. « Ma carte » is gone: an old ?onglet=carte link, and a
-// ?wallet=apple arrival, land on Accueil.
+// The bottom bar (user, 2026-11-25): Accueil · Historique · Récompenses · Mon
+// compte. Round 4 (user, 2026-11-26): no page opens another page — Récompenses
+// (« Vos offres ») is a tab of this page, and two views have no bottom item lit:
+// « programme » (the Wallet « Programme » tile) and « parrainage » (the home's
+// « Parrainer un proche »). An old ?onglet=carte link, and a ?wallet=apple
+// arrival, land on Accueil.
 export const TABS = ['accueil', 'historique', 'recompenses', 'compte'];
-const VIEWS = TABS;
+export const VIEWS = [...TABS, 'programme', 'parrainage'];
+const ALIASES = { offres: 'recompenses', partager: 'parrainage' };
 const ONE_SHOT = ['offre', 'notify', 'wallet', 'k'];
 
-/** The tab the address bar asks for. « programme » (the Wallet tile) is Récompenses. */
+/** The view the address bar asks for. */
 export function tabFromSearch(search) {
   const q = new URLSearchParams(typeof search === 'string' ? search : '');
-  const o = (q.get('onglet') || '').toLowerCase();
-  if (o === 'programme') return 'recompenses';
-  if (VIEWS.includes(o)) return o;
-  return 'accueil';
+  const raw = (q.get('onglet') || '').toLowerCase();
+  const o = ALIASES[raw] || raw;
+  return VIEWS.includes(o) ? o : 'accueil';
 }
 
 /** The address bar for `tab`: the shop's view stays, one-shot params go. */
@@ -164,23 +167,27 @@ export function searchForTab(search, tab) {
   return s ? `?${s}` : '';
 }
 
+const OLD_PAGES = { offres: 'recompenses', partager: 'parrainage' };
+
 /**
- * The bottom « Récompenses » is a link (user, 2026-11-25): « Vos offres » of
- * this card, /card/{bc}/offres — the shop's view (?vue=commerce) kept, never
- * the owner key or any one-shot param. null without a card id.
+ * The old addresses of « Vos offres » and « Partagez la carte » (Wallet backs,
+ * SMS, e-mails): /card/{bc}/offres → /card/{bc}?onglet=recompenses,
+ * /card/{bc}/partager → ?onglet=parrainage — every other parameter kept (the
+ * owner key and ?vue=commerce are the gate's to read). null for any other path.
  */
-export function rewardsHref(barcodeId, search) {
-  const bc = typeof barcodeId === 'string' ? barcodeId.trim() : '';
-  if (!bc) return null;
+export function cardViewPath(pathname, search) {
+  const m = /^\/card\/([^/]+)\/([^/]+)\/?$/.exec(typeof pathname === 'string' ? pathname : '');
+  const view = m && OLD_PAGES[m[2].toLowerCase()];
+  if (!view) return null;
   const q = new URLSearchParams(typeof search === 'string' ? search : '');
-  return `/card/${encodeURIComponent(bc)}/offres${q.get('vue') === 'commerce' ? '?vue=commerce' : ''}`;
+  q.delete('onglet');
+  q.set('onglet', view);
+  return `/card/${m[1]}?${q.toString()}`;
 }
 
-const IN_PAGE_TABS = ['accueil', 'historique', 'compte'];
-
-/** The bottom item lit for `tab` — none on the hidden programme view. */
+/** The lit bottom item for `tab` — none on the programme and parrainage views. */
 export function navActive(tab) {
-  return IN_PAGE_TABS.includes(tab) ? tab : null;
+  return TABS.includes(tab) ? tab : null;
 }
 
 // ---------------------------------------------------------------- networks

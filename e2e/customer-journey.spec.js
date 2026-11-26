@@ -125,16 +125,18 @@ test.describe.serial('a customer, end to end', () => {
     const page = await ctx.newPage();
     const w = watch(page);
     await page.goto(`/card/${me.barcode}/offres?k=${me.key}`);  // featured action « Offres »
+    // round 4: the card page itself, on its Récompenses tab — the key kept on the phone, out of the bar
+    await expect(page).toHaveURL(new RegExp(`/card/${me.barcode}\\?onglet=recompenses$`));
     await expect(page.locator('body')).toContainText('Vos offres');
     await w.clean('offres tile');
-    await page.getByRole('link', { name: 'Voir ma carte' }).click();      // → the card (2026-10-10 redesign)
+    await page.getByRole('tab', { name: 'Accueil' }).click();            // → the card's home
     await expect(page).toHaveURL(new RegExp(`/card/${me.barcode}$`));
     await expect(page.getByRole('navigation', { name: 'Ma carte en ligne' })).toBeVisible();
     await w.clean('card from the offers');
     await page.goto(`/card/${me.barcode}?onglet=programme&k=${me.key}`);   // « Programme »
     await expect(page).toHaveURL(new RegExp(`/card/${me.barcode}`));
-    // « Le programme » is a hidden view (no bottom item lit); the bottom « Récompenses » opens « Vos offres » (2026-11-25)
-    await expect(page.getByRole('tabpanel', { name: 'Récompenses' })).toContainText('Le programme');
+    // « Le programme » is a hidden view (no bottom item lit); the bottom « Récompenses » is « Vos offres » (round 4)
+    await expect(page.getByRole('tabpanel', { name: 'Le programme' })).toContainText('Le programme');
     await expect(page.locator('.wcp-nav [aria-selected="true"]')).toHaveCount(0);
     await page.getByRole('tab', { name: 'Accueil' }).click();                // this customer's card
     await expect(page.locator('body')).toContainText(me.name.split(' ')[0]);
@@ -170,11 +172,13 @@ test.describe.serial('a customer, end to end', () => {
     await ctx.close();
   });
 
-  test('without any key, the offers page says how to open it', async ({ browser }) => {
+  test('without any key, the offers address never shows the offers: a phone without the card gets the signup', async ({ browser }) => {
     const ctx = await browser.newContext();
     const page = await ctx.newPage();
     await page.goto(`/card/${me.barcode}/offres`);
-    await expect(page.locator('body')).toContainText('Ouvrez vos offres depuis votre carte');
+    // round 4: /offres is the card page's view, so the card's own rule (card QR ownership, #154)
+    await expect(page).toHaveURL(new RegExp(`/join/${SLUG}(/[a-z0-9-]+)?\\?p=${me.barcode}`));
+    await expect(page.locator('body')).not.toContainText('Vos offres');
     await ctx.close();
   });
 
@@ -220,11 +224,19 @@ test.describe.serial('a customer, end to end', () => {
     const w = watch(page);
     await page.goto(path);
     await page.getByRole('button', { name: 'Récupérer ma carte' }).click();
+    // the Wallet add screen of that card first (user, 2026-11-26), the card page under it
+    await expect(page.getByTestId('readd-wallet')).toBeVisible();
+    await page.getByRole('link', { name: /Ouvrir ma carte/ }).click();
     await expect(page).toHaveURL(new RegExp(`/card/${me.barcode}`));
     await expect(page.locator('body')).toContainText(me.name.split(' ')[0]);
     await w.clean('card given back');
-    await page.goto(path);                                       // the link is spent
-    await expect(page.locator('body')).toContainText('déjà été utilisé');
+    await page.goto(path);                                       // this phone took it: its Wallet add screen again
+    await expect(page.getByTestId('readd-wallet')).toBeVisible();
+    const other = await browser.newContext();                    // any other phone: the link is spent
+    const p2 = await other.newPage();
+    await p2.goto(path);
+    await expect(p2.locator('body')).toContainText('déjà été utilisé');
+    await other.close();
     await ctx.close();
   });
 });

@@ -38,7 +38,8 @@ test('the card counts exactly the offers its « Mes offres » page lists', async
   await page.evaluate(([bc, k]) => localStorage.setItem('fidclic:my_cards', JSON.stringify({ [bc]: k })),
     [made.barcode_id, made.card_key]);
 
-  const offers = page.getByRole('link', { name: /Mes offres/ });
+  // round 4: the tile opens the Récompenses tab of the card page (no other page)
+  const offers = page.getByRole('button', { name: /Mes offres/ });
   await page.goto(`/card/${made.barcode_id}`);
   await expect(offers).toBeVisible();
   await expect(offers, 'a défi is not « en cours » in Mes offres').not.toContainText('en cours');

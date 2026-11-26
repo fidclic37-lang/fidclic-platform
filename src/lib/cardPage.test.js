@@ -5,7 +5,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  activityTime, activityRow, pointsBox, tabFromSearch, searchForTab, socialLinks, TABS, rewardsHref, navActive,
+  activityTime, activityRow, pointsBox, tabFromSearch, searchForTab, socialLinks, TABS, VIEWS, cardViewPath, navActive,
   followNetworks, ctaOf, CTA_DEFAULT_LABEL, appleAddHref,
 } from './cardPage.js';
 
@@ -145,19 +145,25 @@ test('pointsBox: a cagnotte reads in euros', () => {
   assert.equal(b.message, '5 % de chaque achat dans votre cagnotte');
 });
 
-test('tabs from the address bar, and back — no « Ma carte » any more (2026-11-25)', () => {
+test('tabs from the address bar, and back — everything in the card page (round 4, 2026-11-26)', () => {
   assert.deepEqual(TABS, ['accueil', 'historique', 'recompenses', 'compte']);
+  assert.deepEqual(VIEWS, ['accueil', 'historique', 'recompenses', 'compte', 'programme', 'parrainage']);
   assert.equal(tabFromSearch(''), 'accueil');
   assert.equal(tabFromSearch('?onglet=carte'), 'accueil', 'old « Ma carte » links land on Accueil');
   assert.equal(tabFromSearch('?onglet=CARTE'), 'accueil');
-  assert.equal(tabFromSearch('?onglet=recompenses'), 'recompenses');
-  assert.equal(tabFromSearch('?onglet=programme'), 'recompenses');   // the Wallet « Programme » tile
+  assert.equal(tabFromSearch('?onglet=recompenses'), 'recompenses', 'the bottom « Récompenses » = « Vos offres », in the page');
+  assert.equal(tabFromSearch('?onglet=offres'), 'recompenses', 'the old offers page');
+  assert.equal(tabFromSearch('?onglet=programme'), 'programme', 'the Wallet « Programme » tile: the programme view');
+  assert.equal(tabFromSearch('?onglet=PROGRAMME'), 'programme');
+  assert.equal(tabFromSearch('?onglet=parrainage'), 'parrainage');
+  assert.equal(tabFromSearch('?onglet=partager'), 'parrainage', 'the old share page');
   assert.equal(tabFromSearch('?onglet=compte'), 'compte');
   assert.equal(tabFromSearch('?onglet=historique'), 'historique');
-  assert.equal(tabFromSearch('?onglet=offres'), 'accueil');
   assert.equal(tabFromSearch('?onglet=nimporte'), 'accueil');
+  assert.equal(tabFromSearch('?onglet='), 'accueil');
   assert.equal(tabFromSearch('?wallet=apple'), 'accueil', '« Ajouter à Apple Wallet » from another app: the home');
   assert.equal(tabFromSearch('?wallet=apple&onglet=compte'), 'compte');
+  assert.equal(tabFromSearch('?onglet=compte&onglet=historique'), 'compte', 'the first one wins');
   assert.equal(tabFromSearch(undefined), 'accueil');
   assert.equal(tabFromSearch(null), 'accueil');
 });
@@ -169,30 +175,40 @@ test('searchForTab keeps the shop view, drops one-shot params', () => {
   assert.equal(searchForTab('?vue=commerce', 'compte'), '?vue=commerce&onglet=compte');
   assert.equal(searchForTab('?vue=commerce&onglet=compte', 'accueil'), '?vue=commerce');
   assert.equal(searchForTab('?offre=c1&notify=1&wallet=apple&k=abc&onglet=programme', 'recompenses'), '?onglet=recompenses');
+  assert.equal(searchForTab('?vue=commerce', 'parrainage'), '?vue=commerce&onglet=parrainage');
+  assert.equal(searchForTab('', 'programme'), '?onglet=programme');
   assert.equal(searchForTab('?vue=commerce', 'nimporte'), '?vue=commerce');
 });
 
-// user, 2026-11-25: the bottom « Récompenses » opens « Vos offres » (/card/{bc}/offres),
-// the page the Wallet rewards tile opened until now; the old in-page panel stays
-// a hidden view at ?onglet=programme / ?onglet=recompenses (no bottom tab lit there)
-test('rewardsHref: the offers page of THIS card, the shop view kept, nothing else', () => {
-  assert.equal(rewardsHref('FT-AB12CD34', ''), '/card/FT-AB12CD34/offres');
-  assert.equal(rewardsHref('FT-AB12CD34', undefined), '/card/FT-AB12CD34/offres');
-  assert.equal(rewardsHref('FT-AB12CD34', '?vue=commerce'), '/card/FT-AB12CD34/offres?vue=commerce');
-  assert.equal(rewardsHref('FT-AB12CD34', '?onglet=carte&vue=commerce&k=secret&offre=c1'), '/card/FT-AB12CD34/offres?vue=commerce');
-  assert.equal(rewardsHref('FT-AB12CD34', '?k=secret&notify=1'), '/card/FT-AB12CD34/offres', 'the owner key never rides along');
-  assert.equal(rewardsHref('FT-AB12CD34', '?vue=autre'), '/card/FT-AB12CD34/offres');
-  assert.equal(rewardsHref('FT/../x?y', ''), '/card/FT%2F..%2Fx%3Fy/offres', 'an odd id cannot break the path');
-  assert.equal(rewardsHref('', ''), null);
-  assert.equal(rewardsHref(null, '?vue=commerce'), null);
+// round 4 (user, 2026-11-26): no page opens another page — the old addresses
+// /card/{bc}/offres and /card/{bc}/partager open the card page on that view,
+// every parameter kept (the owner key, ?vue=commerce, ?offre=) for the gate
+test('cardViewPath: the old offers / share addresses → the card page on their view', () => {
+  assert.equal(cardViewPath('/card/FT-AB12CD34/offres', ''), '/card/FT-AB12CD34?onglet=recompenses');
+  assert.equal(cardViewPath('/card/FT-AB12CD34/offres/', ''), '/card/FT-AB12CD34?onglet=recompenses', 'a trailing slash');
+  assert.equal(cardViewPath('/card/FT-AB12CD34/partager', ''), '/card/FT-AB12CD34?onglet=parrainage');
+  assert.equal(cardViewPath('/card/FT-AB12CD34/offres', '?vue=commerce'), '/card/FT-AB12CD34?vue=commerce&onglet=recompenses');
+  assert.equal(cardViewPath('/card/FT-AB12CD34/offres', '?k=s3cr%C3%A9t&offre=c1'), '/card/FT-AB12CD34?k=s3cr%C3%A9t&offre=c1&onglet=recompenses',
+    'the owner key goes to the gate, which keeps it on the phone and drops it from the bar');
+  assert.equal(cardViewPath('/card/FT-AB12CD34/partager', '?onglet=compte'), '/card/FT-AB12CD34?onglet=parrainage', 'the path decides');
+  assert.equal(cardViewPath('/card/ft-ab12cd34/OFFRES', ''), '/card/ft-ab12cd34?onglet=recompenses');
+  assert.equal(cardViewPath('/card/FT-AB12CD34', '?onglet=compte'), null, 'the card page itself: nothing to do');
+  assert.equal(cardViewPath('/card/FT-AB12CD34/ajouter', '?k=x'), null, 'the Apple add page stays a page');
+  assert.equal(cardViewPath('/card/FT-AB12CD34/nimporte', ''), null);
+  assert.equal(cardViewPath('/join/x/offres', ''), null);
+  assert.equal(cardViewPath('/card//offres', ''), null);
+  assert.equal(cardViewPath(undefined, undefined), null);
+  assert.equal(cardViewPath('/card/FT-AB%2F..%2Fx/offres', ''), '/card/FT-AB%2F..%2Fx?onglet=recompenses', 'an odd id stays one segment');
 });
 
-test('navActive: which bottom item is lit — Historique is a real tab now', () => {
+test('navActive: which bottom item is lit — all four are tabs of this page now', () => {
   assert.equal(navActive('accueil'), 'accueil');
   assert.equal(navActive('historique'), 'historique');
+  assert.equal(navActive('recompenses'), 'recompenses', 'Récompenses is in the page (round 4)');
   assert.equal(navActive('compte'), 'compte');
+  assert.equal(navActive('programme'), null, 'the programme view: no item lit');
+  assert.equal(navActive('parrainage'), null, 'the Parrainage view: no item lit (a back arrow leads home)');
   assert.equal(navActive('carte'), null, 'no « Ma carte » item');
-  assert.equal(navActive('recompenses'), null, 'the programme view is not the Récompenses item (that one is a link)');
   assert.equal(navActive(undefined), null);
   assert.equal(navActive('nimporte'), null);
 });

@@ -74,11 +74,11 @@ test('a grey photo has no accent, still a dark tone', () => {
 
 test('fully transparent, empty, missing → nothing', () => {
   const t = run(photo([['#c9a04a', 1]], { alpha: 0 }));
-  assert.deepEqual(t, { accent: null, dark: null });
+  assert.deepEqual(t, { accent: null, dark: null, band: null });
   for (const bad of [new Uint8ClampedArray(0), [], null, undefined, 'abc', 42, {}]) {
-    assert.deepEqual(paletteFromPixels(bad, { width: 0, height: 0 }), { accent: null, dark: null }, `bad ${JSON.stringify(bad)}`);
+    assert.deepEqual(paletteFromPixels(bad, { width: 0, height: 0 }), { accent: null, dark: null, band: null }, `bad ${JSON.stringify(bad)}`);
   }
-  assert.deepEqual(paletteFromPixels([201, 160, 74], {}), { accent: null, dark: null }, 'not even one whole pixel');
+  assert.deepEqual(paletteFromPixels([201, 160, 74], {}), { accent: null, dark: null, band: null }, 'not even one whole pixel');
 });
 
 test('transparent pixels do not vote: a gold logo on a transparent square', () => {
@@ -117,7 +117,49 @@ test('neon and pastel pixels do not drown a real mid colour', () => {
 });
 
 test('photoPalette outside a browser: nothing, without throwing', async () => {
-  assert.deepEqual(await photoPalette('/api/media/abc'), { accent: null, dark: null });
-  assert.deepEqual(await photoPalette(''), { accent: null, dark: null });
-  assert.deepEqual(await photoPalette(null), { accent: null, dark: null });
+  assert.deepEqual(await photoPalette('/api/media/abc'), { accent: null, dark: null, band: null });
+  assert.deepEqual(await photoPalette(''), { accent: null, dark: null, band: null });
+  assert.deepEqual(await photoPalette(null), { accent: null, dark: null, band: null });
+});
+
+// ---------------------------------------------------------------- the band (2026-11-26)
+// iOS 27 poster cards: with no footer colour of the owner's, Wallet draws the
+// band under the fields as a blur of the photo's bottom. `band` = the average
+// colour of the photo's bottom quarter (opaque pixels only).
+const rows = (w, h, paint) => {
+  const out = new Uint8ClampedArray(w * h * 4);
+  for (let y = 0; y < h; y += 1) for (let x = 0; x < w; x += 1) out.set([...paint(x, y), 255], (y * w + x) * 4);
+  return { data: out, width: w, height: h };
+};
+
+test('band: the bottom quarter only, averaged', () => {
+  // graphite top, warm bronze bottom quarter (Palissy)
+  const p = run(rows(64, 64, (x, y) => (y >= 48 ? rgbOf('#8c6a48') : rgbOf('#3a3b3f'))));
+  assert.equal(p.band, '#8c6a48');
+  // a 50/50 bottom: the mean of the two
+  const q = run(rows(64, 64, (x, y) => (y < 48 ? rgbOf('#ffffff') : x % 2 ? rgbOf('#000000') : rgbOf('#c8a050'))));
+  assert.equal(q.band, '#645028');
+});
+
+test('band: a black photo lit with gold at the top stays dark at the bottom', () => {
+  const p = run(rows(64, 64, (x, y) => (y < 20 && x > 10 && x < 50 ? rgbOf('#c9a04a') : rgbOf('#15110c'))));
+  assert.equal(p.band, '#15110c');
+  assert.ok(hueNear(hsl(p.accent).h, 41, 6), `the gold is still the accent (${p.accent})`);
+});
+
+test('band: transparent pixels in the bottom do not count; all transparent → null', () => {
+  const { data, width, height } = rows(8, 8, (x, y) => (y >= 6 ? (x < 4 ? rgbOf('#6e7442') : rgbOf('#ffffff')) : rgbOf('#101010')));
+  for (let y = 6; y < 8; y += 1) for (let x = 4; x < 8; x += 1) data[(y * 8 + x) * 4 + 3] = 0;
+  assert.equal(paletteFromPixels(data, { width, height }).band, '#6e7442');
+  for (let i = 48; i < 64; i += 1) data[i * 4 + 3] = 0;
+  assert.equal(paletteFromPixels(data, { width, height }).band, null);
+});
+
+test('band: one pixel, a tiny photo, no size given', () => {
+  assert.equal(paletteFromPixels([20, 80, 184, 255], { width: 1, height: 1 }).band, '#1450b8');
+  // 1×3: the bottom quarter rounds up to the last row
+  assert.equal(paletteFromPixels([0, 0, 0, 255, 0, 0, 0, 255, 248, 176, 8, 255], { width: 1, height: 3 }).band, '#f8b008');
+  // no size: the last quarter of the pixels (row order)
+  const flat = [...Array(12)].flatMap((_, i) => (i >= 9 ? [140, 106, 72, 255] : [0, 0, 0, 255]));
+  assert.equal(paletteFromPixels(flat, {}).band, '#8c6a48');
 });
