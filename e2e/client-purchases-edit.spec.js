@@ -20,6 +20,9 @@ async function setup({ request }) {
   const soin = `Soin édit ${stamp}`;
   const a = await (await request.post('/api/owner/catalogue/products', { headers: SH, data: { name: coupe, price: 22, category: '' } })).json();
   await (await request.post('/api/owner/catalogue/products', { headers: SH, data: { name: soin, price: 8, category: '' } })).json();
+  for (let i = 1; i <= 10; i += 1) {     // a real catalogue is long: the editor must show all of it
+    await request.post('/api/owner/catalogue/products', { headers: SH, data: { name: `Produit ${stamp}-${i}`, price: i, category: i % 2 ? 'Boissons' : 'Snacks' } });
+  }
   const pub = await (await request.get('/api/join/cafe-lumiere/page')).json();
   const signup = await (await request.post('/api/join/cafe-lumiere', { data: {
     name: `Édition ${stamp}`, phone: `07${String(Date.now()).slice(-8)}`, postal_code: '37000', birthday: '01/02/1990', consent: true,
@@ -50,7 +53,7 @@ async function openPurchases(page, login, store, stamp) {
 test('the business corrects a purchase from its catalogue, then deletes it', async ({ page, request }) => {
   const errors = [];
   page.on('pageerror', (e) => errors.push(e.message));
-  const { login, store, stamp, coupe, soin } = await setup({ request });
+  const { login, store, stamp, coupe, soin, H } = await setup({ request });
   const panel = await openPurchases(page, login, store, stamp);
 
   // what the till recorded
@@ -62,6 +65,10 @@ test('the business corrects a purchase from its catalogue, then deletes it', asy
   await row.getByRole('button', { name: 'Modifier' }).click();
   const editor = panel.getByTestId('purchase-editor');
   await expect(editor).toBeVisible();
+  // the WHOLE catalogue is offered, not a handful (user, 2026-11-26)
+  const catalogue = ((await (await request.get('/api/owner/catalog', { headers: H })).json()).items || []).filter((i) => i.active !== false).length;
+  expect(catalogue).toBeGreaterThan(10);
+  await expect(editor.getByRole('list', { name: 'Produits du catalogue' }).getByRole('button')).toHaveCount(catalogue);
   await editor.getByRole('button', { name: `Retirer un ${coupe}` }).click();
   await editor.getByPlaceholder('Ajouter un produit du catalogue…').fill(soin.slice(0, 12));
   await editor.getByRole('button', { name: new RegExp(`^${soin}`) }).click();
