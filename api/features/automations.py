@@ -1633,6 +1633,8 @@ def wallet_added(tid: str, cust: Dict[str, Any], wallet: str) -> List[Dict[str, 
     if not tid or not cust or not cust.get("id"):
         return []
     fresh = _db.customers.find_one({"id": cust["id"]}, {"_id": 0}) or cust
+    if wallet == "apple" and added_before(fresh, _now()):
+        return []                                  # back on an iPhone: a return, never a welcome
     out = fire("welcome", tid, fresh, {"event": "wallet", "wallet": wallet})
     if wallet == "apple" and not any(out):
         card_added_note(tid, fresh)
@@ -1646,6 +1648,40 @@ def pushed_now(out: List[Dict[str, Any]]) -> bool:
 
 # devices that link the card within this time are one « add » (iPhone + Apple Watch)
 CARD_ADDED_BURST = timedelta(minutes=10)
+
+
+def added_before(cust: Optional[Dict[str, Any]], at: datetime) -> bool:
+    """Was this card already in an Apple Wallet before this add (more than
+    CARD_ADDED_BURST ago)? (user, 2026-11-26: Mahdi's HFDD card, added in
+    October, got « Bienvenue » today: the check read only
+    pass_registration_log, which exists since 2026-10-30.) Every trace counts,
+    whatever its date — 1 Jan 2026 and before included:
+        · the client's first / last « added » dates, a removal;
+        · another device's registration, an iPhone that fetched the card
+          unregistered, a push already sent for it;
+        · the registration log.
+    Never raises: in doubt (a read failed) it says « before » — a missed
+    welcome is harmless, a false one rings on a stranger's lock screen."""
+    if not cust:
+        return False
+    try:
+        cutoff = at - CARD_ADDED_BURST
+        for k in ("wallet_first_added_at", "wallet_added_at", "apple_unregistered_fetch_at"):
+            d = _aware(cust.get(k))
+            if d and d < cutoff:
+                return True
+        if cust.get("wallet_removed_at"):
+            return True
+        serial = cust.get("barcode_id")
+        if not serial:
+            return False
+        older = {"$lt": cutoff}
+        return bool(_db.pass_registrations.find_one({"serial": serial, "created_at": older}, {"_id": 1})
+                    or _db.pass_registration_log.find_one({"serial": serial, "kind": "added", "at": older}, {"_id": 1})
+                    or _db.pass_push_log.find_one({"serial": serial, "sent_at": older}, {"_id": 1}))
+    except Exception as exc:                           # noqa: BLE001
+        print(f"automations: wallet history not read ({exc})")
+        return True
 
 
 def card_added_note(tid: str, cust: Dict[str, Any]) -> bool:
@@ -1663,11 +1699,9 @@ def card_added_note(tid: str, cust: Dict[str, Any]) -> bool:
             return False
         if _db.automation_log.find_one({"customer_id": cust["id"], "scenario": "welcome"}, {"_id": 1}):
             return False                               # the shop already welcomed this client
-        serial = cust.get("barcode_id")
         at = _now()
         # on an iPhone before (not this minute's iPhone + its Watch): a return, not a welcome
-        if cust.get("wallet_removed_at") or (serial and _db.pass_registration_log.find_one(
-                {"serial": serial, "kind": "added", "at": {"$lt": at - CARD_ADDED_BURST}}, {"_id": 1})):
+        if added_before(cust, at):
             return False
         claimed = _db.customers.update_one({"id": cust["id"], "card_added_note_at": None},
                                            {"$set": {"card_added_note_at": at}})
