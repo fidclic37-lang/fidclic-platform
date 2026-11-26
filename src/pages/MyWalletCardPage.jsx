@@ -1,6 +1,6 @@
 import { vh } from '../lib/fit';
 import React, { useEffect, useRef, useState } from 'react';
-import { useParams, Link, useNavigate, useLocation } from 'react-router-dom';
+import { useParams, Link, Navigate, useNavigate, useLocation } from 'react-router-dom';
 import { readMine, addMine, forgetMine, keyOf } from '../lib/myCards';
 import { Bell, RefreshCw, Trash2, CheckCircle2, XCircle, Clock, X, Download, ShieldCheck, Star, Settings, MapPin, Phone, Globe, Store, ChevronLeft, Flame, Gift } from 'lucide-react';
 import api, { publicAPI } from '../lib/api';
@@ -13,8 +13,14 @@ import { protectNames } from '../lib/translator';
 import { liveOffers } from '../lib/cardOffers';
 import { themeFromCard, themeVars } from '../lib/cardTheme';
 import { photoPalette } from '../lib/photoPalette';
-import { activityTime, activityRow, pointsBox, tabFromSearch, searchForTab, followNetworks, ctaOf, appleAddHref, rewardsHref, navActive, reviewOpen } from '../lib/cardPage';
+import { activityTime, activityRow, pointsBox, tabFromSearch, searchForTab, followNetworks, ctaOf, appleAddHref, cardViewPath, navActive, reviewOpen } from '../lib/cardPage';
+import CardOffersContent from '../components/CardOffersContent';
+import CardShareContent from '../components/CardShareContent';
 import './MyWalletCardPage.css';
+
+// The public « Partagez la carte » page (round 4: unrouted, kept for a rollback)
+// — only for a phone that cannot open this card (see CardOwnerGate).
+const CardSharePage = React.lazy(() => import('./CardSharePage'));
 
 /*
  * « Ma carte en ligne » — the customer's card page (/card/:barcodeId, the
@@ -25,9 +31,16 @@ import './MyWalletCardPage.css';
  *
  *   Accueil      the mockup + the missed-offers banner + the automation message
  *   Historique   every activity, page by page (also « Voir tout »)
- *   Récompenses  a LINK to « Vos offres » (/card/{bc}/offres, CardOffersPage —
- *                user, 2026-11-25), not an in-page tab
+ *   Récompenses  « Vos offres » IN the page (round 4, user 2026-11-26: no page
+ *                opens another page): défis, the reward and its meter, the live
+ *                offers, an offer's sheet — components/CardOffersContent
  *   Mon compte   paramètres, avis, à propos, RGPD, delete the card
+ *
+ * Two views with no bottom item lit (the bar stays, a back arrow leads home):
+ *   ?onglet=programme   « Le programme », the reward waiting, the défis (Wallet tile)
+ *   ?onglet=parrainage  « Parrainer un proche » — components/CardShareContent
+ * The old addresses /card/{bc}/offres and /card/{bc}/partager open this page on
+ * those views (lib/cardPage cardViewPath); their pages stay unrouted (rollback).
  *
  * « Ma carte » is gone everywhere (user, 2026-11-25): no tab, no button in the
  * points box, no pass preview, no Wallet buttons, no share / home screen /
@@ -36,15 +49,14 @@ import './MyWalletCardPage.css';
  * a ?wallet=apple arrival (« Ajouter à Apple Wallet » tapped in another app,
  * opened in Safari) starts that add itself — see appleAddHref.
  *
- * Tabs live in the address bar (?onglet=historique|compte) so the back
- * button walks them. Hidden view, no bottom item lit: ?onglet=programme /
- * ?onglet=recompenses — « Le programme », the reward waiting at the till,
- * the défis (the Wallet « Avantages membres » tile).
+ * Tabs live in the address bar (?onglet=historique|recompenses|compte|
+ * programme|parrainage) so the back button walks them.
  * Colours come from the card itself, else from its photo (lib/cardTheme
  * themeFromCard + lib/photoPalette), words from lib/cardPage.
- * Hero (2026-11-25): logo + shop name + tagline at the TOP of the photo, no
- * bell, no account button; « Bonjour, <prénom> ! » at its BOTTOM, just above
- * the points box; the photo fills the hero (cover).
+ * Hero: logo + shop name + tagline compact in the TOP-LEFT corner, right under
+ * the status bar (round 4); « Bonjour, <prénom> ! » at the photo's BOTTOM, just
+ * above the points box; the photo fills the hero (cover). The colours are the
+ * Wallet card's own (card.pass_colors + the photo's bottom band, lib/cardTheme).
  * Home tiles: offers · parrainer · the store's button (card.cta, set by the
  * FidClic super admin per établissement — « Prendre rendez-vous » by default).
  * A network or a button with no link says « Lien pas encore ajouté ».
@@ -133,7 +145,7 @@ const fmtDay = (s) => {
 const TAB_DEFS = [
   { key: 'accueil', label: 'Accueil', icon: I.home },
   { key: 'historique', label: 'Historique', icon: I.clock23 },
-  { key: 'recompenses', label: 'Récompenses', icon: I.gift(23), link: true },   // → « Vos offres » (2026-11-25)
+  { key: 'recompenses', label: 'Récompenses', icon: I.gift(23) },   // « Vos offres », in the page (round 4)
   { key: 'compte', label: 'Mon compte', icon: I.user(23) },
 ];
 
@@ -563,12 +575,27 @@ const CardView = () => {
   const location = useLocation();
   const navigate = useNavigate();
   const tab = tabFromSearch(location.search);
-  const goTab = (next) => {
-    const search = searchForTab(window.location.search, next);
-    if (search === window.location.search) return;
-    navigate({ pathname: window.location.pathname, search }, { state: { cardTab: true } });
-    try { window.scrollTo({ top: 0 }); } catch (_e) { /* old browsers */ }
+  // `anchor`: an element of the new view to scroll to (« Mes offres exclusives » → the offers)
+  const scrollToAnchor = (id) => {
+    try { document.getElementById(id)?.scrollIntoView({ block: 'start' }); } catch (_e) { /* old browsers */ }
   };
+  const goTab = (next, anchor) => {
+    const search = searchForTab(window.location.search, next);
+    if (search === window.location.search) {
+      if (anchor) scrollToAnchor(anchor);
+      return;
+    }
+    navigate({ pathname: window.location.pathname, search }, { state: { cardTab: true, anchor: anchor || null } });
+    if (!anchor) { try { window.scrollTo({ top: 0 }); } catch (_e) { /* old browsers */ } }
+  };
+  // the new view is drawn: go to the part asked for (the tile « Mes offres exclusives » → the offers)
+  const anchorWanted = location.state?.anchor;
+  useEffect(() => {
+    if (!anchorWanted) return undefined;
+    const raf = requestAnimationFrame(() => scrollToAnchor(anchorWanted));
+    return () => cancelAnimationFrame(raf);
+  }, [location.key, anchorWanted]); // eslint-disable-line react-hooks/exhaustive-deps
+  const backHome = () => (location.state?.cardTab ? navigate(-1) : goTab('accueil'));
 
   // « Ajouter à Apple Wallet » tapped in another app opened this card in Safari
   // with ?wallet=apple (components/WalletButtons). There is no « Ma carte »
@@ -756,11 +783,8 @@ const CardView = () => {
   // « Donner mon avis »: 14 days after the last visit — GET /card/{bc} sends it
   const recentVisit = reviewOpen(customer.last_visit_date);
   const pending = rewardsPending(customer);
-  // the shop's view (?vue=commerce, from the dashboard) stays on through « Mes
-  // offres » and back — without it the page took the browser's own card for
-  // the shop and opened that one instead (QA F34, 2026-10-11)
-  const shopView = new URLSearchParams(window.location.search).get('vue') === 'commerce';
-  const q = shopView ? '?vue=commerce' : '';
+  // the shop's view (?vue=commerce, from the dashboard) stays on through every
+  // tab and view: searchForTab keeps it (QA F34, 2026-10-11)
   const shop = tenant?.name || '';
   const firstName = (customer.first_name || String(customer.name || '').trim().split(/\s+/)[0] || '').trim();
   const box = pointsBox(card, customer);
@@ -834,7 +858,8 @@ const CardView = () => {
       <div className={`hero${heroUrl ? '' : ' nophoto'}`} data-testid="card-hero">
         {heroUrl && <div className="hero-img" data-testid="hero-photo" aria-hidden="true" style={{ backgroundImage: heroUrl }} />}
         {heroUrl && <div className="hero-shade" aria-hidden="true" />}
-        <header className="top">
+        {/* the shop, compact in the top-left corner under the status bar (round 4) */}
+        <header className="top" data-testid="hero-brand">
           <div className="brand">
             <ShopLogo url={card.logo_url} name={shop} className="logo" />
             <div style={{ minWidth: 0 }}>
@@ -915,11 +940,14 @@ const CardView = () => {
         )}
 
         <div className="tiles">
-          <Link to={`/card/${barcodeId}/offres${q}`} className="sheet tile">
+          {/* both stay in this page (round 4): the Récompenses tab at its offers, the Parrainage view */}
+          <button type="button" className="sheet tile" data-testid="tile-offers" onClick={() => goTab('recompenses', 'wcp-offres')}>
             <span className="ico">{I.ticket}</span>Mes offres exclusives
             {liveOfferCount > 0 && <span className="badge num">{liveOfferCount} en cours</span>}
-          </Link>
-          <Link to={`/card/${barcodeId}/partager${q}`} className="sheet tile"><span className="ico">{I.people}</span>Parrainer un proche</Link>
+          </button>
+          <button type="button" className="sheet tile" data-testid="tile-share" onClick={() => goTab('parrainage')}>
+            <span className="ico">{I.people}</span>Parrainer un proche
+          </button>
           {/* the store's button (FidClic super admin, per établissement) — a new tab, or « Lien pas encore ajouté » */}
           {cta.url ? (
             <a href={cta.url} target="_blank" rel="noopener noreferrer" className="sheet tile" data-testid="card-cta">
@@ -971,9 +999,9 @@ const CardView = () => {
 
   // ─────────────────────────────────────────────────── Récompenses
   const defis = data?.defis || {};
-  const recompensesPanel = (
+  const programmePanel = (
     <>
-      {tabHead('Récompenses', () => (location.state?.cardTab ? navigate(-1) : goTab('accueil')))}
+      {tabHead('Le programme', backHome)}
       <div className="stack">
         {/* A full card restarts on the next visit; its reward stays valid until handed over */}
         {pending > 0 && (
@@ -1030,7 +1058,27 @@ const CardView = () => {
             <p className="d">{w.kind === 'parrainage' ? 'Votre récompense de parrainage' : `« ${w.title} »`} — présentez votre carte en caisse{w.expires_at ? `, avant le ${fmtDay(w.expires_at)}` : ''}.</p>
           </section>
         ))}
-        <Link to={`/card/${barcodeId}/offres${q}`} className="ghostbtn">Voir mes offres {I.chev}</Link>
+        <button type="button" className="ghostbtn" onClick={() => goTab('recompenses', 'wcp-offres')}>Voir mes offres {I.chev}</button>
+      </div>
+    </>
+  );
+
+  // ─────────────────────────────────────────────────── Récompenses (« Vos offres », in the page — round 4)
+  const offersPanel = (
+    <>
+      {tabHead(`Vos offres${firstName ? `, ${firstName}` : ''}`)}
+      <div className="stack" data-testid="offers-tab">
+        <CardOffersContent data={data} />
+      </div>
+    </>
+  );
+
+  // ─────────────────────────────────────────────────── Parrainage (the home tile, the old /partager)
+  const sharePanel = (
+    <>
+      {tabHead('Parrainage', backHome)}
+      <div className="stack">
+        <CardShareContent barcodeId={barcodeId} qrInk={theme.ink} />
       </div>
     </>
   );
@@ -1161,9 +1209,11 @@ const CardView = () => {
     </>
   );
 
-  const panels = { accueil: home, recompenses: recompensesPanel, compte: comptePanel, historique: historyPanel };
-  const tabLabel = TAB_DEFS.find((t) => t.key === tab)?.label || 'Accueil';
-  // the lit bottom item: none on the hidden programme view
+  const panels = { accueil: home, recompenses: offersPanel, programme: programmePanel, parrainage: sharePanel,
+    compte: comptePanel, historique: historyPanel };
+  const tabLabel = TAB_DEFS.find((t) => t.key === tab)?.label
+    || ({ programme: 'Le programme', parrainage: 'Parrainage' })[tab] || 'Accueil';
+  // the lit bottom item: none on the programme and parrainage views
   const lit = navActive(tab);
   const hidden = !lit;
 
@@ -1176,19 +1226,14 @@ const CardView = () => {
 
       <nav className="wcp-nav" aria-label="Ma carte en ligne">
         <div role="tablist" aria-label="Rubriques de la carte">
-          {TAB_DEFS.map((t) => (t.link ? (
-            // « Récompenses »: a page of its own (« Vos offres »), not a panel here
-            <Link key={t.key} to={rewardsHref(barcodeId, window.location.search) || '#'} className="navlink">
-              {t.icon}{t.label}
-            </Link>
-          ) : (
+          {TAB_DEFS.map((t) => (
             <button key={t.key} type="button" role="tab" id={`wcp-tab-${t.key}`}
                     aria-selected={lit === t.key} aria-controls={lit === t.key ? `wcp-panel-${t.key}` : undefined}
                     tabIndex={lit === t.key || (hidden && t.key === 'accueil') ? 0 : -1}
                     onClick={() => goTab(t.key)}
                     onKeyDown={(e) => {
                       if (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft') return;
-                      const tabs = TAB_DEFS.filter((x) => !x.link);
+                      const tabs = TAB_DEFS;
                       const i = tabs.findIndex((x) => x.key === t.key);
                       const next = tabs[(i + (e.key === 'ArrowRight' ? 1 : tabs.length - 1)) % tabs.length];
                       goTab(next.key);
@@ -1196,7 +1241,7 @@ const CardView = () => {
                     }}>
               {t.icon}{t.label}
             </button>
-          )))}
+          ))}
         </div>
       </nav>
 
@@ -1245,7 +1290,8 @@ const ToggleRow = ({ icon, label, hint, value, onToggle, disabled }) => (
 //             campaign analytics pipeline already aggregates.
 // ───────────────────────────────────────────────────────────────────────
 function NotificationDetailModal({ notification, tenant, card, customerId, onClose }) {
-  const accent = card?.primary_color || '#B85C38';
+  // the card's own button colour (lib/cardTheme, the .wcp variables)
+  const accent = 'var(--btn, #B85C38)';
   // Pluck the first URL from the body so we can offer a tappable CTA.
   // Merchants usually paste an offer URL into the message; this surfaces
   // it as a proper button instead of leaving the customer to find it.
@@ -1288,7 +1334,7 @@ function NotificationDetailModal({ notification, tenant, card, customerId, onClo
           <div
             style={{
               width: 40, height: 40, borderRadius: 10, flexShrink: 0,
-              background: accent, color: 'white',
+              background: accent, color: 'var(--btn-ink, #fff)',
               display: 'flex', alignItems: 'center', justifyContent: 'center',
               fontWeight: 700, fontSize: 16,
             }}
@@ -1338,7 +1384,7 @@ function NotificationDetailModal({ notification, tenant, card, customerId, onClo
             style={{
               display: 'block', textAlign: 'center', marginTop: 18,
               padding: '12px 18px', borderRadius: 99,
-              background: accent, color: 'white',
+              background: accent, color: 'var(--btn-ink, #fff)',
               fontWeight: 700, fontSize: 14, textDecoration: 'none',
             }}
           >
@@ -1380,7 +1426,10 @@ const CardOwnerGate = () => {
   const location = useLocation();
   const [view, setView] = useState(null);       // null: asking · 'card' · 'retry'
   const [attempt, setAttempt] = useState(0);
+  // /card/{bc}/offres and /card/{bc}/partager (old links): this page, on that view
+  const canonical = cardViewPath(location.pathname, location.search);
   useEffect(() => {
+    if (canonical) return undefined;
     let alive = true;
     const bc = String(barcodeId || '').toUpperCase();
     const params = new URLSearchParams(location.search);
@@ -1404,8 +1453,17 @@ const CardOwnerGate = () => {
           const q = params.toString();
           navigate({ pathname: location.pathname, search: q ? `?${q}` : '', hash: location.hash }, { replace: true });
         }
+        const wanted = tabFromSearch(params.toString());
         if (data?.view === 'own' && data.barcode_id) {
-          window.location.replace(`/card/${data.barcode_id}`);
+          // this phone's own card — on the view the link asked for (offers, parrainage, programme)
+          const keep = ['recompenses', 'parrainage', 'programme'].includes(wanted) ? `?onglet=${wanted}` : '';
+          window.location.replace(`/card/${data.barcode_id}${keep}`);
+        } else if (data?.view === 'join' && data.slug && wanted === 'parrainage') {
+          // « 🎁 Partagez la carte » on the back of the Wallet card carries no owner
+          // key (anyone may be sent that text): a phone that cannot open the card
+          // still gets the public share page it always had — the card's public QR
+          // and the apps, nothing of the card's data (wallet_passes.share_url)
+          setView('share');
         } else if (data?.view === 'join' && data.slug) {
           // a friend's card: the signup form, filed as « Parrainage », never « QR en magasin »
           // …of the friend's establishment (an account with several: one card per store)
@@ -1424,9 +1482,17 @@ const CardOwnerGate = () => {
         setView(e?.response?.status === 404 || keyOf(bc) || k ? 'card' : 'retry');
       });
     return () => { alive = false; };
-  }, [barcodeId, attempt]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [barcodeId, attempt, canonical]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  if (canonical) return <Navigate to={`${canonical}${location.hash || ''}`} replace />;
   if (view === 'card') return <CardView />;
+  if (view === 'share') {
+    return (
+      <React.Suspense fallback={<div className="min-h-screen bg-[#FAFAF8]" />}>
+        <CardSharePage />
+      </React.Suspense>
+    );
+  }
   if (view === 'retry') {
     return (
       <div className="min-h-screen bg-[#FAFAF8] flex items-center justify-center px-4">

@@ -378,6 +378,64 @@ def last_visit(cust: Optional[Dict[str, Any]]) -> Dict[str, Optional[str]]:
     return out
 
 
+_RGB_CSS = re.compile(r"^\s*rgba?\(\s*(-?\d{1,4})\s*,\s*(-?\d{1,4})\s*,\s*(-?\d{1,4})\s*(?:,\s*[\d.]+\s*)?\)\s*$", re.I)
+_HEX_CSS = re.compile(r"^\s*#?([0-9a-f]{3}|[0-9a-f]{6})\s*$", re.I)
+
+
+def hex_color(v: Any) -> Optional[str]:
+    """« rgb(1, 2, 3) » / « #010203 » / « #abc » → « #010203 » (lower case),
+    anything else → None: only a plain colour ever reaches the page's CSS."""
+    if not isinstance(v, str) or len(v) > 40:
+        return None
+    m = _RGB_CSS.match(v)
+    if m:
+        return "#" + "".join("%02x" % max(0, min(255, int(x))) for x in m.groups())
+    m = _HEX_CSS.match(v)
+    if m:
+        h = m.group(1).lower()
+        return "#" + ("".join(c * 2 for c in h) if len(h) == 3 else h)
+    return None
+
+
+def pass_colors(card: Dict[str, Any], cust: Dict[str, Any]) -> Dict[str, Any]:
+    """The colours the client sees on the Apple Wallet card (user, 2026-11-26:
+    the page must read as the same object): the active Pass Designer design of
+    the card's OWN store (its home store, else the main one — as the pass is
+    built), else FidClic's own pass colours (wallet_passes.derive_colors) and
+    the card's fields. footer None = Apple's blur of the photo's bottom."""
+    from features import pass_designer as _PD
+    from features import store_cards as _SC
+    from features import wallet_passes as _WP
+    tid = cust.get("tenant_id")
+    sid = cust.get("branch_id") or _SC.main_store(tid)
+    # pass_designer.load's rule (active, a pass.json), read without the design's
+    # images — they can weigh megabytes and the page needs only colours
+    with _SC.store(tid, sid):
+        doc = _db.card_templates.find_one({"tenant_id": tid},
+                                          {"_id": 0, "pass_designer.active": 1, "pass_designer.pass": 1}) or {}
+    tpl = doc.get("pass_designer") if isinstance(doc.get("pass_designer"), dict) else None
+    if tpl and tpl.get("active", True) is False:
+        tpl = None
+    t = tpl.get("pass") if isinstance(tpl, dict) and isinstance(tpl.get("pass"), dict) else None
+    style = _PD.style_of(t) if t else None
+    own = _WP.derive_colors(card)
+    pick = lambda k: hex_color((t or {}).get(k)) if style else None   # noqa: E731
+    footer = pick("footerBackgroundColor") if style else None
+    if not footer:
+        # FidClic's poster band (wallet_passes.build_pass_json); a design without
+        # its own footer keeps the pass's
+        footer = hex_color(card.get("poster_footer_color"))
+    poster = (style == "posterGeneric") if style else card.get("poster_style") is not False
+    return {
+        "background": pick("backgroundColor") or hex_color(own.get("backgroundColor")),
+        "foreground": pick("foregroundColor") or (None if style and t.get("foregroundColor") else hex_color(own.get("foregroundColor"))),
+        "label": pick("labelColor") or (None if style and t.get("labelColor") else hex_color(own.get("labelColor"))),
+        "footer": footer if poster else None,
+        "name": hex_color(card.get("logo_text_color")),
+        "poster": bool(poster),
+    }
+
+
 def enrich(payload: Dict[str, Any], cust: Dict[str, Any]) -> Dict[str, Any]:
     """The fields GET /api/card/{bc} adds for the page."""
     if not isinstance(payload, dict):
@@ -415,6 +473,11 @@ def enrich(payload: Dict[str, Any], cust: Dict[str, Any]) -> Dict[str, Any]:
         except Exception as exc:  # noqa: BLE001
             print(f"card page: hero photo failed (non-fatal): {exc}")
             card["hero_photo_url"] = None
+        try:   # the Wallet card's own colours (one small read, the store's design)
+            card["pass_colors"] = pass_colors(card, cust)
+        except Exception as exc:  # noqa: BLE001 — colours must never cost the card
+            print(f"card page: pass colours failed (non-fatal): {exc}")
+            card["pass_colors"] = None
     return payload
 
 

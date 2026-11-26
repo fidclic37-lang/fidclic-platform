@@ -7,7 +7,10 @@ import { test, expect } from '@playwright/test';
 
 test.use({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
 
-test('the share page: QR of the public card link, apps, copy', async ({ page, request }) => {
+// round 4: /card/{bc}/partager is the card page's Parrainage view (card-online.spec.js);
+// the link on the Wallet back carries no owner key, so a phone that cannot open the
+// card keeps this public share page — nothing of the card's data on it
+test('the share page (a phone without the card): QR of the public card link, apps, copy', async ({ page, request }) => {
   const errors = [];
   page.on('pageerror', (e) => errors.push(e.message));
   const pub = await (await request.get('/api/join/cafe-lumiere/page')).json();

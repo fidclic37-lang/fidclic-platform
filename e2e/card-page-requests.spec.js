@@ -50,4 +50,19 @@ test('the card page asks each question once', async ({ page }) => {
   expect(count(`POST /api/card/${card}/wallet-prepare`), asked.join('\n')).toBe(0);
   const dup = asked.filter((a, i) => asked.indexOf(a) !== i && !a.startsWith('POST'));
   expect(dup, 'no question asked twice').toEqual([]);
+
+  // round 4: « Vos offres » and « Parrainage » are views of this page — they read
+  // the card the page already has, never ask for it again
+  const nav = page.getByRole('navigation', { name: 'Ma carte en ligne' });
+  await nav.getByRole('tab', { name: 'Récompenses' }).click();
+  await expect(page.getByTestId('offers-tab')).toBeVisible();
+  await nav.getByRole('tab', { name: 'Accueil' }).click();
+  await page.getByRole('button', { name: /Parrainer un proche/ }).click();
+  await expect(page.getByTestId('share-view')).toBeVisible();
+  await nav.getByRole('tab', { name: 'Récompenses' }).click();
+  await page.waitForTimeout(1500);
+  expect(count(`GET /api/card/${card}`), asked.join('\n')).toBe(1);
+  expect(count(`GET /api/card/${card}/notification-status`), asked.join('\n')).toBe(1);
+  expect(count(`GET /api/card/${card}/activity`), asked.join('\n')).toBe(1);
+  expect(count(`GET /api/card/${card}/inviter`), asked.join('\n')).toBe(1);
 });

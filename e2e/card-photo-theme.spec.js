@@ -9,6 +9,7 @@
  *   npx vite build && E2E_PORT=8811 npx playwright test e2e/card-photo-theme.spec.js
  */
 import { test, expect } from '@playwright/test';
+import { deltaE2000 } from '../src/lib/cardTheme.js';
 import zlib from 'node:zlib';
 
 const SLUG = 'cafe-lumiere';
@@ -60,7 +61,14 @@ async function newCard(request, name) {
 
 // a black card with no colour of its own: every colour field the page reads, blanked
 const BLACK = { card_bg_color: '#15120E', brand_color: null, primary_color: null, accent_color: null,
-  poster_footer_color: null, logo_text_color: '#FFFFFF', secondary_color: null, surface_color: null, surface: null, design: {} };
+  poster_footer_color: null, logo_text_color: '#FFFFFF', secondary_color: null, surface_color: null, surface: null, design: {},
+  // the Wallet card itself (round 4, card.pass_colors): black / white, no footer colour — Apple blurs the photo
+  pass_colors: { background: '#000000', foreground: '#ffffff', label: '#ffffff', footer: null, name: '#ffffff', poster: true } };
+// the photo's bottom quarter (y ≥ 225): the grey chair on the right, the room's deep tone elsewhere
+const bottomOf = (deep) => {
+  const chair = hex('#7d7a76'), d = hex(deep), share = 139 / 400;     // x > 260
+  return `#${[0, 1, 2].map((i) => Math.round(chair[i] * share + d[i] * (1 - share)).toString(16).padStart(2, '0')).join('')}`;
+};
 
 async function stage(page, bc, card) {
   const asked = [];
@@ -98,7 +106,7 @@ const hueNear = (a, b, tol) => Math.min(Math.abs(a - b), 360 - Math.abs(a - b)) 
 
 test.use({ viewport: { width: 390, height: 844 } });
 
-for (const [name, url, hue] of [['gold', '/e2e-assets/gold.png', 41], ['olive', '/e2e-assets/olive.png', 66]]) {
+for (const [name, url, hue, deep] of [['gold', '/e2e-assets/gold.png', 41, '#0f0d0b'], ['olive', '/e2e-assets/olive.png', 66, '#14160e']]) {
   test(`a black card with a ${name} photo takes the photo's colour, without asking the server more`, async ({ page, request }) => {
     const made = await newCard(request, `Photo ${name}`);
     const bc = made.barcode_id;
@@ -118,7 +126,10 @@ for (const [name, url, hue] of [['gold', '/e2e-assets/gold.png', 41], ['olive', 
     const v = await vars(page);
     expect(hueNear(hsl(v['--page']).h, hue, 15) && hsl(v['--page']).s > 0.1, `--page from the ${name} (${v['--page']})`).toBe(true);
     expect(hueNear(hsl(v['--btn-ink']).h, hue, 15), `--btn-ink in the ${name} (${v['--btn-ink']})`).toBe(true);
-    expect(hsl(v['--btn']).l, `dark button (${v['--btn']})`).toBeLessThan(0.15);
+    // round 4: under the photo and on the buttons, the band the Wallet card shows (Apple's blur of the photo's bottom)
+    expect(deltaE2000(v['--hero-fade'], bottomOf(deep)), `fade = the photo's bottom (${v['--hero-fade']} vs ${bottomOf(deep)})`).toBeLessThan(6);
+    expect(v['--btn']).toBe(v['--hero-fade']);
+    expect(hsl(v['--btn']).l, `dark button (${v['--btn']})`).toBeLessThan(0.25);
     expect(v['--accent']).not.toBe(slate['--accent']);
     expect(v['--bar']).not.toBe(slate['--bar']);
     await expect(page.getByTestId('hero-photo')).toHaveCSS('background-size', 'cover');

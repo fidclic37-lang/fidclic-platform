@@ -260,7 +260,7 @@ const firstColor = (...vals) => { for (const v of vals) { const c = parseColor(v
 const NEUTRAL = { h: 220, s: 0.12, brand: '#273142', accent: '#3b6fd6' };
 const OK_SOFT = '#e5f3eb';
 
-export function themeFromCard(card, photo) {
+function legacyTheme(card, photo) {
   const c = card && typeof card === 'object' ? card : {};
   const d = c.design && typeof c.design === 'object' ? c.design : {};
   const cardBrand = firstColor(c.brand_color, c.card_bg_color, c.primary_color, d.primary_color);
@@ -342,11 +342,174 @@ export function themeFromCard(card, photo) {
     ? (contrast(heroFade, accent) >= 4.5 ? heroFade : readable('#111111', [accent]))
     : banner;
   const ok = readable('#16824f', [sheet, OK_SOFT]);
+  const chipInk = contrast(accent, btn) >= 3 ? accent : btnInk;
+  const accentOn = onColor(accent, [banner]);
 
   return {
     neutral, page, sheet, ink, muted, faint, line, soft, brand, brandInk, accent, accentSoft, accentInk,
-    btn, btnInk, banner, banner2, bannerInk, bar, heroFade, ctaBg, ctaInk, ribbon: accent, ok, okSoft: OK_SOFT,
+    btn, btnInk, banner, banner2, bannerInk, bar, heroFade, heroInk: '#ffffff', chipInk, accentOn, ctaBg, ctaInk,
+    ribbon: accent, ok, okSoft: OK_SOFT,
   };
+}
+
+/** The first of `prefer`, then white / black, that reads on `bg` at `min`:1 (one of white / black always does). */
+function onColor(bg, prefer = [], min = 4.5) {
+  for (const c of [...prefer, '#ffffff', '#000000']) if (c && contrast(c, bg) >= min) return c;
+  return contrast('#ffffff', bg) >= contrast('#000000', bg) ? '#ffffff' : '#000000';
+}
+
+/*
+ * themeFromCard(card, photo) — round 4 (user, 2026-11-26: « door door tak card
+ * design se match nahi karta »): the page reads as the SAME object as the
+ * shop's Wallet card. card.pass_colors (GET /api/card, features/card_page:
+ * the colours of the Apple card the client holds, store-correct) and the
+ * photo's palette (lib/photoPalette: accent, dark, band) decide:
+ *
+ *   band      the band under the card's fields: the owner's footer colour
+ *             (pass_colors.footer, else card.poster_footer_color), else Apple's
+ *             blur of the photo's bottom (photo.band); a storeCard (iOS 26,
+ *             pass_colors.poster false) shows its background there instead
+ *   heroFade  = band, exactly; the greeting on it in white or black, whichever reads
+ *   page      a very light tint of the band's hue (the accent's when the band is grey)
+ *   accent    the card's label / foreground colour when chromatic, else the shop
+ *             name's colour (logo_text_color — the old designer's accent fields
+ *             only when the Wallet colours are unknown), else the photo's dominant
+ *             colour, else the band
+ *             — numbers, links, the bar, the tile icons; made readable (4.5:1) for text
+ *   btn       = band, its ink: the card's chromatic label, the photo's gold on a
+ *             dark band, the card's foreground / label, else white / black
+ *
+ * No band known yet (no photo, the photo not read, a palette from before the
+ * band): the 2026-11-25 theme (legacyTheme), with the card's label as accent.
+ * Garbage in pass_colors is ignored: only parseColor's #rrggbb come out.
+ */
+export function themeFromCard(card, photo) {
+  const c = card && typeof card === 'object' ? card : {};
+  const d = c.design && typeof c.design === 'object' ? c.design : {};
+  const pc = c.pass_colors && typeof c.pass_colors === 'object' && !Array.isArray(c.pass_colors) ? c.pass_colors : {};
+  const pBg = parseColor(pc.background), pFg = parseColor(pc.foreground), pLabel = parseColor(pc.label);
+  const poster = pc.poster !== false;
+  const p = photo && typeof photo === 'object' ? photo : {};
+  const pBand = typeof p.band === 'string' ? parseColor(p.band) : null;
+  const ownerFooter = parseColor(pc.footer) || parseColor(c.poster_footer_color);
+  const band = poster ? (ownerFooter || pBand) : pBg;
+  const passAccent = [pLabel, pFg].find((x) => x && chromatic(x)) || null;
+  if (!band) return legacyTheme(passAccent ? { ...c, accent_color: passAccent } : c, photo);
+
+  const cardBrand = firstColor(c.brand_color, c.card_bg_color, c.primary_color, d.primary_color);
+  // the card's own fields: with the Wallet card's colours known, only what that
+  // card draws — the shop name's colour; the old designer's accent / secondary
+  // colours are painted nowhere on it (round 4)
+  const knowsPass = !!(pBg || pFg || pLabel);
+  const cardAccent = (knowsPass ? [pc.name, c.logo_text_color] : [c.accent_color, c.logo_text_color, d.accent_color, c.secondary_color])
+    .map(parseColor).find((x) => x && chromatic(x)) || null;
+  const photoAccent = typeof p.accent === 'string' && parseColor(p.accent) && chromatic(parseColor(p.accent)) ? parseColor(p.accent) : null;
+  const accentRaw = passAccent || cardAccent || photoAccent || (chromatic(band) ? band : null)
+    || (cardBrand && chromatic(cardBrand) ? cardBrand : null);
+  const accent = accentRaw || NEUTRAL.accent;
+  const aH = toHsl(accent);
+  const bH = toHsl(band);
+
+  // the page: the band's hue, very light — the accent's when the band is grey / black / white
+  const bandTinted = bH.s >= 0.12 && bH.l >= 0.08 && bH.l <= 0.94;
+  const tint = bandTinted ? { h: bH.h, s: Math.min(bH.s, 0.45) }
+    : accentRaw ? { h: aH.h, s: Math.min(aH.s, 0.35) } : { h: NEUTRAL.h, s: NEUTRAL.s };
+  const page = hsl(tint.h, tint.s, 0.955);
+  const sheet = '#ffffff';
+  const soft = hsl(tint.h, Math.min(tint.s * 1.4, 0.6), 0.92);
+  const line = hsl(tint.h, Math.min(tint.s, 0.35), 0.89);
+  const ink = readable(hsl(tint.h, Math.min(tint.s, 0.55), 0.12), [page, sheet]);
+  const muted = readable(hsl(tint.h, Math.min(tint.s, 0.18), 0.4), [page, sheet, soft]);
+  const faint = readable(hsl(tint.h, Math.min(tint.s, 0.14), 0.46), [page, sheet]);
+
+  const accentSoft = hsl(aH.h, Math.min(aH.s, 0.9), 0.89);
+  const accentInk = readable(accent, [sheet, accentSoft, page]);
+  const brandInk = accentRaw ? readable(accent, [sheet, page, soft]) : ink;
+
+  // the solid button = the band; its ink from the card's own colours
+  const darkBand = luminance(band) < 0.18;
+  const goldInk = accentRaw && accentRaw !== passAccent && darkBand ? hsl(aH.h, Math.min(aH.s, 0.6), 0.76) : null;
+  const btn = band;
+  const btnInk = onColor(btn, [passAccent, goldInk, pFg, pLabel]);
+  const banner = btn;
+  const banner2 = hsl(bH.h, bH.s, bH.l > 0.5 ? bH.l - 0.06 : bH.l * 0.62);
+  const bannerInk = [btnInk, '#ffffff', '#000000'].find((x) => contrast(x, banner) >= 4.5 && contrast(x, banner2) >= 4.5)
+    || onColor(banner);
+  const chipInk = contrast(accent, btn) >= 3 ? accent : btnInk;
+  const ctaBg = accentRaw && contrast(accent, banner) >= 3 ? accent : bannerInk;
+  const ctaInk = onColor(ctaBg, [banner]);
+  const accentOn = onColor(accent, [banner]);
+  const bar = `linear-gradient(90deg,${accentInk},${accent})`;
+  const heroFade = band;
+  const heroInk = onColor(heroFade, ['#ffffff']);
+  const ok = readable('#16824f', [sheet, OK_SOFT]);
+
+  return {
+    neutral: false, page, sheet, ink, muted, faint, line, soft, brand: accentInk, brandInk, accent, accentSoft, accentInk,
+    btn, btnInk, banner, banner2, bannerInk, bar, heroFade, heroInk, chipInk, accentOn, ctaBg, ctaInk,
+    ribbon: accent, ok, okSoft: OK_SOFT,
+  };
+}
+
+// ================================================================ colour distance
+// CIE L*a*b* (sRGB, D65) and ΔE — how far the page's colours are from the
+// card's (cardThemeMatch.test.js): CIEDE2000 (Sharma, Wu & Dalal 2005) and CIE76.
+
+/** [L, a, b] of a colour parseColor reads, else null. */
+export function hexToLab(v) {
+  const hex = parseColor(v);
+  if (!hex) return null;
+  const { r, g, b } = hexToRgb(hex);
+  const lin = (x) => { const s = x / 255; return s <= 0.04045 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4; };
+  const R = lin(r), G = lin(g), B = lin(b);
+  const X = (0.4124564 * R + 0.3575761 * G + 0.1804375 * B) / 0.95047;
+  const Y = (0.2126729 * R + 0.7151522 * G + 0.0721750 * B) / 1.0;
+  const Z = (0.0193339 * R + 0.1191920 * G + 0.9503041 * B) / 1.08883;
+  const f = (t) => (t > 216 / 24389 ? Math.cbrt(t) : (24389 / 27 * t + 16) / 116);
+  const fx = f(X), fy = f(Y), fz = f(Z);
+  return [116 * fy - 16, 500 * (fx - fy), 200 * (fy - fz)];
+}
+
+/** CIEDE2000 between two [L, a, b]. */
+export function deltaE2000Lab([L1, a1, b1], [L2, a2, b2]) {
+  const rad = Math.PI / 180;
+  const C1 = Math.hypot(a1, b1), C2 = Math.hypot(a2, b2);
+  const Cm = (C1 + C2) / 2;
+  const G = 0.5 * (1 - Math.sqrt(Cm ** 7 / (Cm ** 7 + 25 ** 7)));
+  const ap1 = a1 * (1 + G), ap2 = a2 * (1 + G);
+  const Cp1 = Math.hypot(ap1, b1), Cp2 = Math.hypot(ap2, b2);
+  const hp = (b, ap) => { if (b === 0 && ap === 0) return 0; const h = Math.atan2(b, ap) / rad; return h < 0 ? h + 360 : h; };
+  const hp1 = hp(b1, ap1), hp2 = hp(b2, ap2);
+  const dL = L2 - L1, dC = Cp2 - Cp1;
+  let dh = 0;
+  if (Cp1 * Cp2 !== 0) { dh = hp2 - hp1; if (dh > 180) dh -= 360; else if (dh < -180) dh += 360; }
+  const dH = 2 * Math.sqrt(Cp1 * Cp2) * Math.sin((dh / 2) * rad);
+  const Lm = (L1 + L2) / 2, Cpm = (Cp1 + Cp2) / 2;
+  let hm = hp1 + hp2;
+  if (Cp1 * Cp2 !== 0) {
+    if (Math.abs(hp1 - hp2) > 180) hm = hp1 + hp2 < 360 ? (hp1 + hp2 + 360) / 2 : (hp1 + hp2 - 360) / 2;
+    else hm = (hp1 + hp2) / 2;
+  }
+  const T = 1 - 0.17 * Math.cos((hm - 30) * rad) + 0.24 * Math.cos(2 * hm * rad)
+    + 0.32 * Math.cos((3 * hm + 6) * rad) - 0.2 * Math.cos((4 * hm - 63) * rad);
+  const dTheta = 30 * Math.exp(-(((hm - 275) / 25) ** 2));
+  const Rc = 2 * Math.sqrt(Cpm ** 7 / (Cpm ** 7 + 25 ** 7));
+  const Sl = 1 + (0.015 * (Lm - 50) ** 2) / Math.sqrt(20 + (Lm - 50) ** 2);
+  const Sc = 1 + 0.045 * Cpm, Sh = 1 + 0.015 * Cpm * T;
+  const Rt = -Math.sin(2 * dTheta * rad) * Rc;
+  return Math.sqrt((dL / Sl) ** 2 + (dC / Sc) ** 2 + (dH / Sh) ** 2 + Rt * (dC / Sc) * (dH / Sh));
+}
+
+/** CIEDE2000 between two colours; Infinity when either is not a colour. */
+export function deltaE2000(a, b) {
+  const A = hexToLab(a), B = hexToLab(b);
+  return A && B ? deltaE2000Lab(A, B) : Infinity;
+}
+
+/** CIE76 (plain Lab distance) between two colours; Infinity when either is not a colour. */
+export function deltaE76(a, b) {
+  const A = hexToLab(a), B = hexToLab(b);
+  return A && B ? Math.hypot(A[0] - B[0], A[1] - B[1], A[2] - B[2]) : Infinity;
 }
 
 /** The theme as CSS custom properties for a `style` prop: brandInk → --brand-ink. */

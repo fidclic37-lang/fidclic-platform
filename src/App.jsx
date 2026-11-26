@@ -101,8 +101,8 @@ const JoinPage = lazyPage(() => import('./pages/JoinPage'));
 const DevelopersPage = lazyPage(() => import('./pages/DevelopersPage'));
 const MyWalletCardPage = lazyPage(() => import('./pages/MyWalletCardPage'));
 const ReaddCardPage = lazyPage(() => import('./pages/ReaddCardPage'));
-const CardOffersPage = lazyPage(() => import('./pages/CardOffersPage'));
-const CardSharePage = lazyPage(() => import('./pages/CardSharePage'));
+// « Vos offres » / « Partagez la carte » are views of the card page since round 4
+// (2026-11-26): pages/CardOffersPage + pages/CardSharePage stay, unrouted, for a rollback
 const AppleWalletAddPage = lazyPage(() => import('./pages/AppleWalletAddPage'));
 const HistoryPage = lazyPage(() => import('./pages/HistoryPage'));
 
@@ -371,8 +371,9 @@ function App() {
           <Route path="/inscription/:slug" element={<JoinPage />} />
           <Route path="/inscription/:slug/:channel" element={<JoinPage />} />
           <Route path="/inscription/:slug/:channel/:channel2" element={<JoinPage />} />
-          <Route path="/card/:barcodeId/offres" element={<CardOffersPage />} />
-          <Route path="/card/:barcodeId/partager" element={<CardSharePage />} />
+          {/* the old addresses: the card page on its Récompenses / Parrainage view (lib/cardPage cardViewPath) */}
+          <Route path="/card/:barcodeId/offres" element={<MyWalletCardPage />} />
+          <Route path="/card/:barcodeId/partager" element={<MyWalletCardPage />} />
           <Route path="/card/:barcodeId/ajouter" element={<AppleWalletAddPage />} />
           <Route path="/card/:barcodeId" element={<MyWalletCardPage />} />
           {/* a card given back by the shop: a one-time link (features/card_status) */}
