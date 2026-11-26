@@ -1,8 +1,9 @@
 import React, { useEffect, useState } from 'react';
-import { X, Loader2, ShoppingBag, Store } from 'lucide-react';
+import { X, Loader2, ShoppingBag, Store, Pencil } from 'lucide-react';
 import { ownerAPI } from '../lib/api';
 import ClientProfile from './ClientProfile';
 import ClientWallet from './ClientWallet';
+import PurchaseEdit from './PurchaseEdit';
 
 /* « Historique d'achats » of one client (user, 2026-10-15): every visit, newest
    first — the day and the hour (Paris), the establishment, what was taken
@@ -27,6 +28,9 @@ export default function ClientPurchases({ clientId, onClose, initialTab = 'profi
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState(initialTab);
+  const [editing, setEditing] = useState(null);      // the visit id being corrected (features/visit_edit)
+  const [flash, setFlash] = useState('');
+  const [reloadKey, setReloadKey] = useState(0);
 
   useEffect(() => {
     let alive = true;
@@ -36,7 +40,13 @@ export default function ClientPurchases({ clientId, onClose, initialTab = 'profi
       .catch((e) => { if (alive) setError(e?.response?.data?.detail || "L'historique n'a pas pu être chargé."); })
       .finally(() => { if (alive) setLoading(false); });
     return () => { alive = false; };
-  }, [clientId, page]);
+  }, [clientId, page, reloadKey]);
+  useEffect(() => {
+    if (!flash) return undefined;
+    const t = setTimeout(() => setFlash(''), 4000);
+    return () => clearTimeout(t);
+  }, [flash]);
+  const afterChange = (text) => { setEditing(null); setFlash(text || 'Achat enregistré.'); setReloadKey((k) => k + 1); };
   useEffect(() => {
     const onKey = (e) => { if (e.key === 'Escape') onClose(); };
     window.addEventListener('keydown', onKey);
@@ -101,6 +111,7 @@ export default function ClientPurchases({ clientId, onClose, initialTab = 'profi
         <div className="flex-1 overflow-y-auto px-6 py-4">
           {loading && !d && <p className="flex items-center gap-2 text-[13px] text-[#64748B]"><Loader2 size={16} className="animate-spin" /> Chargement…</p>}
           {error && <p className="rounded-lg bg-[#FEF2F2] px-3 py-2.5 text-[13px] text-[#B91C1C]">{error}</p>}
+          {flash && <p role="status" className="mb-3 rounded-lg bg-[#ECFDF5] px-3 py-2.5 text-[13px] text-[#065F46]">{flash}</p>}
           {d && d.rows.length === 0 && (
             <p className="rounded-xl border border-dashed border-[#DCE7FB] px-4 py-8 text-center text-[13px] text-[#64748B]">
               Aucun achat enregistré pour ce client pour l&apos;instant.
@@ -117,11 +128,25 @@ export default function ClientPurchases({ clientId, onClose, initialTab = 'profi
                       {r.store && <span className="ml-1.5 inline-flex items-center gap-1"><Store size={12} /> {r.store}</span>}
                     </p>
                   </div>
-                  <div className="text-right">
-                    <p className="text-[16px] font-bold tabular-nums text-[#0B1C3F]">{r.amount === null ? '—' : eur(r.amount)}</p>
-                    {gain(r) && <p className="text-[12px] font-semibold text-[#0F8B58]">{gain(r)}</p>}
+                  <div className="flex items-start gap-2">
+                    <div className="text-right">
+                      <p className="text-[16px] font-bold tabular-nums text-[#0B1C3F]">{r.amount === null ? '—' : eur(r.amount)}</p>
+                      {gain(r) && <p className="text-[12px] font-semibold text-[#0F8B58]">{gain(r)}</p>}
+                      {r.edited && <p className="text-[11px] font-semibold uppercase tracking-[0.03em] text-[#7C3AED]">Modifié</p>}
+                    </div>
+                    {editing !== r.id && (
+                      <button type="button" onClick={() => setEditing(r.id)} aria-label="Modifier" title="Modifier cet achat"
+                              className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg border border-[#E2E8F0] text-[#334155] hover:bg-[#F4F7FC]">
+                        <Pencil size={16} />
+                      </button>
+                    )}
                   </div>
                 </div>
+                {editing === r.id && (
+                  <PurchaseEdit clientId={clientId} row={r} catalogue={d?.catalogue || []} onClose={() => setEditing(null)}
+                                onSaved={(res) => afterChange(res?.text || 'Achat modifié.')}
+                                onDeleted={(res) => afterChange(res?.text || 'Achat supprimé.')} />
+                )}
                 {r.items.length > 0 ? (
                   <ul className="mt-3 space-y-1 border-t border-[#F4F7FC] pt-3">
                     {r.items.map((it, i) => (
