@@ -253,7 +253,7 @@ export default function WalletButtons({ barcodeId, onError, phoneOnly = false, o
 }
 
 // No web page may open Wallet at one card; the card's own « Bienvenue »
-// banner does (features/automations.card_added_note, user 2026-11-25).
+// banner does — when the shop's own Bienvenue automation sends one.
 export const ADDED_HINT = 'Une notification « Bienvenue » arrive sur votre iPhone : touchez-la pour ouvrir votre carte.';
 
 function GoogleGlyph({ w, h }) {
