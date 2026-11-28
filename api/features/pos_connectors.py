@@ -101,7 +101,7 @@ def init(db):
             ("pos_events", [("state", 1), ("at", 1)], {}),
             ("pos_events", [("conn_id", 1), ("at", -1)], {}),
             ("pos_events", "at", {"expireAfterSeconds": 90 * 86400, "name": "at_ttl"}),
-            ("pos_tickets", [("provider", 1), ("ticket_id", 1)], {"unique": True}),
+            ("pos_tickets", [("tenant_id", 1), ("provider", 1), ("ticket_id", 1)], {"unique": True}),   # a ticket is one shop's
             ("pos_tickets", [("tenant_id", 1), ("at", -1)], {}),
             ("pos_customer_links", [("conn_id", 1), ("customer_id", 1)], {"unique": True}),
             ("pos_customer_links", [("conn_id", 1), ("provider_customer_id", 1)], {})):
@@ -225,23 +225,23 @@ def _live():
 def _claim(t: Dict[str, Any], conn: Dict[str, Any], extra: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     """The ticket's row, taken for this worker — None when it is done or being done."""
     now = _now()
-    key = {"provider": t["provider"], "ticket_id": t["ticket_id"]}
+    key = {"tenant_id": conn["tenant_id"], "provider": t["provider"], "ticket_id": t["ticket_id"]}
     _db.pos_tickets.update_one(key, {"$setOnInsert": {
-        **key, "tenant_id": conn["tenant_id"], "conn_id": conn["id"], "kind": t["kind"], "amount": float(t.get("amount") or 0),
+        **key, "conn_id": conn["id"], "kind": t["kind"], "amount": float(t.get("amount") or 0),
         "currency": t.get("currency"), "location_id": t.get("location_id"), "provider_customer_id": t.get("customer_id"),
         "refund_of": t.get("refund_of"), "at": _aware(t.get("at")) or now, "created_at": now, "status": "new", **extra}}, upsert=True)
     return _db.pos_tickets.find_one_and_update(
-        {**key, "tenant_id": conn["tenant_id"],
+        {**key,
          "$or": [{"status": "new"}, {"status": "processing", "claimed_at": {"$lt": now - timedelta(seconds=CLAIM_STALE_S)}}]},
         {"$set": {"status": "processing", "claimed_at": now}}, return_document=True)
 
 
 def _release(t: Dict[str, Any]) -> None:
-    _db.pos_tickets.update_one({"provider": t["provider"], "ticket_id": t["ticket_id"], "status": "processing"}, {"$set": {"status": "new"}})
+    _db.pos_tickets.update_one({"tenant_id": t["tenant_id"], "provider": t["provider"], "ticket_id": t["ticket_id"], "status": "processing"}, {"$set": {"status": "new"}})
 
 
 def _finish(t: Dict[str, Any], status: str, **fields) -> str:
-    _db.pos_tickets.update_one({"provider": t["provider"], "ticket_id": t["ticket_id"]},
+    _db.pos_tickets.update_one({"tenant_id": t["tenant_id"], "provider": t["provider"], "ticket_id": t["ticket_id"]},
                                {"$set": {"status": status, "done_at": _now(), **fields}, "$unset": {"claimed_at": ""}})
     return status
 
@@ -270,10 +270,10 @@ def _find_card(conn: Dict[str, Any], adapter, provider_customer_id: Optional[str
     return c
 
 
-def _refunded(provider: str, sale_id: str) -> float:
+def _refunded(tid: str, provider: str, sale_id: str) -> float:
     """Every refund seen for a sale, whatever came first (Square does not promise the order)."""
     return float(sum(float(r.get("amount") or 0) for r in _db.pos_tickets.find(
-        {"provider": provider, "kind": "refund", "refund_of": sale_id}, {"_id": 0, "amount": 1})))
+        {"tenant_id": tid, "provider": provider, "kind": "refund", "refund_of": sale_id}, {"_id": 0, "amount": 1})))
 
 
 def _cancel(conn: Dict[str, Any], provider: str, sale_id: str, refund_id: str) -> str:
@@ -288,8 +288,8 @@ def _cancel(conn: Dict[str, Any], provider: str, sale_id: str, refund_id: str) -
         return "refund_manual"
 
 
-def _close_waiting(provider: str, sale_id: str) -> None:
-    _db.pos_tickets.update_many({"provider": provider, "kind": "refund", "refund_of": sale_id, "status": "refund_waiting"},
+def _close_waiting(tid: str, provider: str, sale_id: str) -> None:
+    _db.pos_tickets.update_many({"tenant_id": tid, "provider": provider, "kind": "refund", "refund_of": sale_id, "status": "refund_waiting"},
                                 {"$set": {"status": "refund_done", "sale_ticket_id": sale_id, "done_at": _now()}})
 
 
@@ -303,9 +303,9 @@ def _apply_sale(conn: Dict[str, Any], adapter, t: Dict[str, Any]) -> str:
         amount = float(t.get("amount") or 0)
         if amount < 0 or amount > MAX_AMOUNT:
             return _finish(t, "rejected", reason="amount")
-        back = _refunded(t["provider"], t["ticket_id"])
+        back = _refunded(conn["tenant_id"], t["provider"], t["ticket_id"])
         if back > 0 and back >= amount - 0.005:          # refunded before it reached us: never credited
-            _close_waiting(t["provider"], t["ticket_id"])
+            _close_waiting(conn["tenant_id"], t["provider"], t["ticket_id"])
             return _finish(t, "refunded", refunded_amount=back, customer_id=None)
         if not _tenant_ok(conn["tenant_id"]):
             return _finish(t, "not_applied", reason="plan")
@@ -326,10 +326,10 @@ def _apply_sale(conn: Dict[str, Any], adapter, t: Dict[str, Any]) -> str:
             _db.visits.update_one({"id": vid}, {"$set": {"source": "pos", "pos_provider": t["provider"], "pos_ticket_id": t["ticket_id"]}})
         _db.pos_connections.update_one({"id": conn["id"]}, {"$set": {"last_ticket_at": _now()}})
         status = "matched"
-        back = _refunded(t["provider"], t["ticket_id"])  # a refund that came while the visit was being made
+        back = _refunded(conn["tenant_id"], t["provider"], t["ticket_id"])  # a refund that came while the visit was being made
         if back > 0:
             status = _cancel(conn, t["provider"], t["ticket_id"], "late") if back >= amount - 0.005 else "partial_refund"
-            _close_waiting(t["provider"], t["ticket_id"])
+            _close_waiting(conn["tenant_id"], t["provider"], t["ticket_id"])
         return _finish(t, status, customer_id=cust["id"], visit_id=vid, refunded_amount=back or None)
     except BaseException:
         _release(t)
@@ -346,9 +346,9 @@ def _apply_refund(conn: Dict[str, Any], adapter, t: Dict[str, Any]) -> str:
             # its sale is not here yet (or being applied): the sale counts this refund when it lands,
             # and the tick looks again (pentest 2026-11-28: the visit was kept)
             return _finish(t, "refund_waiting")
-        back = _refunded(t["provider"], sale["ticket_id"])
+        back = _refunded(conn["tenant_id"], t["provider"], sale["ticket_id"])
         full = back >= float(sale.get("amount") or 0) - 0.005
-        key = {"provider": t["provider"], "ticket_id": sale["ticket_id"]}
+        key = {"tenant_id": conn["tenant_id"], "provider": t["provider"], "ticket_id": sale["ticket_id"]}
         st = sale.get("status")
         if st == "matched" or (st == "partial_refund" and sale.get("visit_id")):
             new = _cancel(conn, t["provider"], sale["ticket_id"], t["ticket_id"]) if full else "partial_refund"
@@ -365,6 +365,7 @@ def _apply_refund(conn: Dict[str, Any], adapter, t: Dict[str, Any]) -> str:
 
 def apply_ticket(conn: Dict[str, Any], t: Dict[str, Any], adapter=None) -> str:
     adapter = adapter or POS.get(conn["provider"])
+    t = {**t, "tenant_id": conn["tenant_id"]}           # a ticket is always one shop's (load lab 2026-11-28)
     if t.get("kind") == "refund":
         return _apply_refund(conn, adapter, t)
     return _apply_sale(conn, adapter, t)
@@ -555,7 +556,7 @@ def reconcile(conn: Dict[str, Any], now: Optional[datetime] = None, begin: Optio
     known = set()
     for n in range(0, len(ids), 500):
         known |= {r["ticket_id"] for r in _db.pos_tickets.find(
-            {"provider": conn["provider"], "ticket_id": {"$in": ids[n:n + 500]}, "status": {"$nin": ["new", "processing"]}},
+            {"tenant_id": conn["tenant_id"], "provider": conn["provider"], "ticket_id": {"$in": ids[n:n + 500]}, "status": {"$nin": ["new", "processing"]}},
             {"_id": 0, "ticket_id": 1})}
     todo = [t for t in tickets if t["ticket_id"] not in known]
     todo.sort(key=lambda x: (x["kind"] == "refund", _aware(x.get("at")) or now))
@@ -626,10 +627,11 @@ def _settle_waiting_refunds(now: datetime) -> int:
         conn = _db.pos_connections.find_one({"id": t.get("conn_id"), "status": {"$in": ["connected", "error"]}}, {"_id": 0})
         if not conn:
             continue
-        sale = _db.pos_tickets.find_one({"provider": t["provider"], "ticket_id": t.get("refund_of")}, {"_id": 0, "status": 1})
+        sale = _db.pos_tickets.find_one({"tenant_id": t["tenant_id"], "provider": t["provider"], "ticket_id": t.get("refund_of")}, {"_id": 0, "status": 1})
         if not sale or sale.get("status") in ("new", "processing"):
             continue
-        _db.pos_tickets.update_one({"provider": t["provider"], "ticket_id": t["ticket_id"], "status": "refund_waiting"}, {"$set": {"status": "new"}})
+        _db.pos_tickets.update_one({"tenant_id": t["tenant_id"], "provider": t["provider"], "ticket_id": t["ticket_id"], "status": "refund_waiting"},
+                                   {"$set": {"status": "new"}})
         apply_ticket(conn, {**t, "at": _aware(t.get("at"))})
         n += 1
     return n

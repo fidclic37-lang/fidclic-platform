@@ -492,6 +492,12 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     check("the next tick finishes the queue", db.pos_events.count_documents({"id": {"$regex": "^f[ab]"}, "state": "pending"}) == 0)
     check("defaults let a lunch rush through: 3000 events / 15 min inline, 2000 a tick",
           P.INLINE_PER_15MIN >= 3000 and P.TICK_EVENTS >= 2000)
+    same = {"provider": "square", "ticket_id": "SAME-ID", "kind": "sale", "amount": 3.0, "currency": "EUR", "location_id": "LOC1",
+            "customer_id": None, "refund_of": None, "at": now}
+    P.apply_ticket(db.pos_connections.find_one({"id": "pos_other"}, {"_id": 0}), same)
+    P.apply_ticket(db.pos_connections.find_one({"id": CID}, {"_id": 0}), same)
+    check("the same ticket id at two shops → two tickets, one per shop (never one shop's swallowing the other's)",
+          {t["tenant_id"] for t in db.pos_tickets.find({"ticket_id": "SAME-ID"})} == {"t1", "t3"})
     db.pos_connections.delete_one({"id": "pos_other"})
 
     print("\nCheck now (owner button)")
