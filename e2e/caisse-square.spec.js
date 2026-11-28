@@ -104,9 +104,9 @@ test('Square: connect, map the stores, a scanned sale arrives, disconnect', asyn
     await route.fulfill({ status: 302, headers: { location: `${baseURL}/api/pos/square/callback?code=e2e-code&state=${encodeURIComponent(state)}` } });
   });
   await btn.click();
-  await expect(page).toHaveURL(/\/dashboard\/parametres\/api/);
-  expect(new URL(authorize).searchParams.get('client_id')).toBe(process.env.SQUARE_APPLICATION_ID);
+  // the page was already on Paramètres: wait for the round trip through « Square », not for the URL
   await expect(page.getByRole('status')).toContainText('Caisse connectée');
+  expect(new URL(authorize).searchParams.get('client_id')).toBe(process.env.SQUARE_APPLICATION_ID);
   await expect(page, 'the ?caisse= note leaves the URL once read').not.toHaveURL(/caisse=/);
   const card = page.getByTestId('caisse-square');
   await expect(card).toContainText('Connectée');
