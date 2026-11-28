@@ -118,7 +118,7 @@ _PREFIX: List[Tuple[str, str]] = [
     ("/api/owner/settings", "settings"), ("/api/owner/settings-versions", "settings"),
     ("/api/owner/etablissement", "settings"), ("/api/owner/join-link", "settings"),
     ("/api/owner/stores", "settings"), ("/api/owner/privacy", "settings"),
-    ("/api/owner/integrations", "settings"), ("/api/owner/customer-rules", "settings"),
+    ("/api/owner/integrations", "settings"), ("/api/owner/pos", "settings"), ("/api/owner/customer-rules", "settings"),
     ("/api/owner/registration-form", "settings"), ("/api/owner/notifications/overview", "settings"),
     ("/api/owner/notifications/rules", "settings"), ("/api/owner/tenant", "settings"),
     ("/api/owner/branches", "settings"),

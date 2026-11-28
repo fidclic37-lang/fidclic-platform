@@ -1,10 +1,11 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import {
   Plug, KeyRound, Webhook, BookOpen, Plus, Copy, Check, Trash2, Loader2, Send, Eye, EyeOff, RotateCw, AlertTriangle,
-  CheckCircle2, XCircle, Pencil, X,
+  CheckCircle2, XCircle, Pencil, X, Store,
 } from 'lucide-react';
 import { ownerAPI } from '../lib/api';
 import { usePlanAccess, LockedSection } from '../components/PlanAccess';
+import CaisseConnectors from '../components/integrations/CaisseConnectors';
 
 /* Paramètres › API & Intégrations (features/merchant_api.py) — keys, webhooks
    and the documentation, for the plans whose « API & Intégrations » switch is
@@ -46,7 +47,10 @@ const Code = ({ children }) => (
 export default function ApiIntegrationsPage() {
   const access = usePlanAccess();
   const allowed = access?.has ? access.has('api_access') : true;
-  const [tab, setTab] = useState('keys');
+  // back from a caisse's own page (?caisse=…) or linked (?tab=caisse): the Caisse tab
+  const [tab, setTab] = useState(() => {
+    try { const q = new URLSearchParams(window.location.search); return q.has('caisse') || q.get('tab') === 'caisse' ? 'caisse' : 'keys'; } catch { return 'keys'; }
+  });
   const [d, setD] = useState(null);
   const [err, setErr] = useState('');
   const [modal, setModal] = useState(null);
@@ -63,7 +67,7 @@ export default function ApiIntegrationsPage() {
   if (access?.ready !== false && !allowed) return <LockedSection detail={access?.locked?.api_access} />;
   if (!d) return err ? <p className="rounded-xl bg-[#FEF2F2] px-4 py-3 text-[13.5px] text-[#B91C1C]">{err}</p> : <p key="loading" className="py-10 text-center text-[13px] text-[#64748B]"><Loader2 size={16} className="mr-1 inline animate-spin" /> Chargement…</p>;
 
-  const TABS = [['keys', 'Clés API', KeyRound], ['webhooks', 'Webhooks', Webhook], ['docs', 'Documentation', BookOpen]];
+  const TABS = [['caisse', 'Caisse', Store], ['keys', 'Clés API', KeyRound], ['webhooks', 'Webhooks', Webhook], ['docs', 'Documentation', BookOpen]];
   return (
     <div className="space-y-4">
       <Card className="flex flex-wrap items-center gap-4 border-[#D5F0E0] bg-gradient-to-r from-[#F1FBF5] to-white">
@@ -86,6 +90,8 @@ export default function ApiIntegrationsPage() {
           <button key={k} type="button" onClick={() => setTab(k)} className={`inline-flex items-center gap-1.5 border-b-2 px-3.5 py-2.5 text-[13px] font-semibold ${tab === k ? 'border-[#2F6BFF] text-[#2F6BFF]' : 'border-transparent text-[#64748B]'}`}><I size={15} /> {l}</button>
         ))}
       </div>
+
+      {tab === 'caisse' && <CaisseConnectors />}
 
       {tab === 'keys' && (
         <Card>
