@@ -95,9 +95,10 @@ def main():
     say("the refund found (COMPLETED) and points at its sale", got is not None,
         "still PENDING in the sandbox" if got is None else f"{got['amount']} {got['currency']}")
     try:
-        sq.http("DELETE", f"/v2/customers/{cust}", token=tok)
-    except PosError:
-        pass
+        sq.delete_customers(tok, [cust])
+        say("the customer FidClic made is deleted at Square (bulk-delete)", sq.customer_reference(tok, cust) is None)
+    except PosError as e:
+        say("the customer FidClic made is deleted at Square (bulk-delete)", False, str(e))
     print("\nOK" if ok else "\nSOME CHECKS FAILED")
     sys.exit(0 if ok else 1)
 

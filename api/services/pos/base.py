@@ -23,6 +23,7 @@ A plug (class) has:
     customer_reference(token, customer_id) → the card code stored on the caisse's customer, or None
     push_customers(token, rows) → {fidclic_id: caisse_customer_id}
         rows = [{fidclic_id, reference_id, given_name, family_name}] — nothing else ever leaves
+    delete_customers(token, caisse_customer_ids) → how many (only the ones FidClic made)
 """
 from __future__ import annotations
 

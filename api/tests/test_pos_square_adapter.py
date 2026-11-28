@@ -145,8 +145,11 @@ def fake(method, path, token=None, json=None, params=None, client_auth=False):
     if path == "/v2/customers/bulk-create":
         out = {}
         for k, v in (json or {}).get("customers", {}).items():
-            out[k] = {"customer": {"id": "SQ-" + k, "reference_id": v.get("reference_id")}} if k != "boom" else {"errors": [{"code": "BAD"}]}
+            ref = v.get("reference_id")
+            out[k] = {"customer": {"id": "SQ-" + ref, "reference_id": ref}} if ref != "x" else {"errors": [{"code": "BAD"}]}
         return 200, {"responses": out}
+    if path == "/v2/customers/bulk-delete":
+        return 200, {"responses": {i: {} for i in (json or {}).get("customer_ids", [])}}
     if path == "/v2/payments":
         if not (params or {}).get("cursor"):
             return 200, {"payments": [pay(pid="P1")["data"]["object"]["payment"],
@@ -185,8 +188,13 @@ check("no customer id → None, no call", sq.customer_reference("EAAA-acc", "") 
 calls.clear()
 out = sq.push_customers("EAAA-acc", [{"fidclic_id": "c1", "reference_id": "https://app.fidclic.com/card/FT-1", "given_name": "Inès", "family_name": "Fontaine"},
                                      {"fidclic_id": "boom", "reference_id": "x", "given_name": "B", "family_name": ""}])
-check("created customers mapped back to FidClic ids", out == {"c1": "SQ-c1"})
-body = calls[-1]["json"]["customers"]["c1"]
+check("created customers mapped back to FidClic ids, the refused one left out", out == {"c1": "SQ-https://app.fidclic.com/card/FT-1"})
+sent_keys = list(calls[-1]["json"]["customers"])
+body = next(v for v in calls[-1]["json"]["customers"].values() if v.get("reference_id", "").endswith("FT-1"))
+check("Square's keys never carry the FidClic id", all("c1" != k and len(k) <= 45 for k in sent_keys))
+sq.push_customers("EAAA-acc", [{"fidclic_id": "c1", "reference_id": "https://app.fidclic.com/card/FT-1", "given_name": "Inès", "family_name": "Fontaine"}])
+check("the same card pushed again (restored after a delete) → a new key, so Square makes a new customer (sandbox 2026-11-28)",
+      not (set(calls[-1]["json"]["customers"]) & set(sent_keys)))
 check("only name + card code go to Square (no phone, no e-mail, no birthday)",
       set(body) <= {"given_name", "family_name", "reference_id", "note"} and body["reference_id"].endswith("FT-1"))
 calls.clear()
@@ -194,6 +202,13 @@ many = [{"fidclic_id": f"c{i}", "reference_id": f"r{i}", "given_name": "X", "fam
 out = sq.push_customers("EAAA-acc", many)
 check("250 customers sent in batches of at most 100", len(calls) == 3 and all(len(c["json"]["customers"]) <= 100 for c in calls) and len(out) == 250)
 check("an empty list sends nothing", sq.push_customers("EAAA-acc", []) == {} )
+
+calls.clear()
+n = sq.delete_customers("EAAA-acc", [f"SQ{i}" for i in range(230)])
+check("230 Square customers deleted in batches of at most 100", n == 230 and len(calls) == 3
+      and all(c["path"] == "/v2/customers/bulk-delete" and len(c["json"]["customer_ids"]) <= 100 for c in calls))
+calls.clear()
+check("nothing to delete → no call", sq.delete_customers("EAAA-acc", []) == 0 and not calls)
 
 print("\nNightly check: every page, only finished sales and refunds")
 since = dt.datetime(2026, 11, 27, tzinfo=dt.timezone.utc)

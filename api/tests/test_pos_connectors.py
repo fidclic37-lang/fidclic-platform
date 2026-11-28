@@ -21,6 +21,7 @@ import hashlib
 import hmac
 import json
 import os
+import re
 import sys
 from urllib.parse import parse_qs, urlsplit
 
@@ -66,7 +67,7 @@ with mongomock.patch(servers=(("localhost", 27017),)):
         return out
 
     # ---- Square, played by a fake --------------------------------------
-    square = {"calls": [], "refresh_fails": False, "revoked": [], "payments": [], "refunds": [], "customers": {},
+    square = {"calls": [], "deleted": [], "refresh_fails": False, "revoked": [], "payments": [], "refunds": [], "customers": {},
               "fail_customer_lookup": False}
 
     def fake_http(method, path, token=None, json=None, params=None, client_auth=False):
@@ -99,9 +100,16 @@ with mongomock.patch(servers=(("localhost", 27017),)):
         if path == "/v2/customers/bulk-create":
             out = {}
             for k, v in (json or {}).get("customers", {}).items():
-                square["customers"]["SQ-" + k] = v.get("reference_id")
-                out[k] = {"customer": {"id": "SQ-" + k}}
+                m = re.search(r"(FT-[A-Z0-9]+)", v.get("reference_id") or "")
+                fid = (db.customers.find_one({"barcode_id": m.group(1)}) or {}).get("id") if m else None
+                if fid:                                  # Square's id, played as SQ-<FidClic id> so the tests can name it
+                    square["customers"]["SQ-" + fid] = v.get("reference_id")
+                    out[k] = {"customer": {"id": "SQ-" + fid}}
             return 200, {"responses": out}
+        if path == "/v2/customers/bulk-delete":
+            ids = (json or {}).get("customer_ids") or []
+            square["deleted"].extend(ids)
+            return 200, {"responses": {i: {} for i in ids}}
         if path == "/v2/payments":
             return 200, {"payments": square["payments"]}
         if path == "/v2/refunds":
@@ -167,35 +175,64 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     check("the owner sees Square offered", page.status_code == 200 and any(p["name"] == "square" and p["configured"] for p in page.json()["providers"]))
 
     print("\nConnecting (OAuth)")
-    r = http("POST", "/api/owner/pos/square/connect", bearer=OWN)
+    COOKIE = "fc_pos_nonce"
+
+    def begin(bearer, **kw):
+        """« Connecter » in one browser: Square's link, its state, and the browser's own cookie."""
+        r = http("POST", "/api/owner/pos/square/connect", bearer=bearer, **kw)
+        st = parse_qs(urlsplit(r.json().get("url", "")).query).get("state", [""])[0]
+        return r, st, r.cookies.get(COOKIE) or ""
+
+    def back(qs, nonce=None):
+        """Square sends that browser back to us (its cookie comes along, or not)."""
+        return http("GET", f"/api/pos/square/callback?{qs}", headers={"cookie": f"{COOKIE}={nonce}"} if nonce else {})
+
+    r, state, nonce = begin(OWN)
     url = r.json().get("url", "")
-    state = parse_qs(urlsplit(url).query).get("state", [""])[0]
     check("connect gives Square's page with a long one-use state", r.status_code == 200 and url.startswith("https://connect.squareupsandbox.com/oauth2/authorize") and len(state) >= 32)
     check("the state is not stored in clear", db.pos_oauth_states.count_documents({"state": state}) == 0 and db.pos_oauth_states.count_documents({}) == 1)
-    bad = http("GET", "/api/pos/square/callback?code=code-1&state=forged")
+    sc = r.headers.get("set-cookie", "")
+    check("connect leaves a browser cookie: HttpOnly, SameSite=Lax, only for /api/pos", nonce and len(nonce) >= 32 and "httponly" in sc.lower()
+          and "samesite=lax" in sc.lower() and "path=/api/pos" in sc.lower())
+    check("…and the cookie is not stored in clear either", nonce not in json.dumps(list(db.pos_oauth_states.find({}, {"_id": 0})), default=str))
+    rs, _, _ = begin(OWN, headers={"x-forwarded-proto": "https"})
+    check("on https the cookie is Secure", "secure" in rs.headers.get("set-cookie", "").lower())
+    bad = back("code=code-1&state=forged", nonce)
     check("a forged state → back to the page with an error, nothing connected",
           bad.status_code in (302, 303, 307) and "caisse=erreur" in bad.headers.get("location", "") and db.pos_connections.count_documents({}) == 0)
-    deny = http("GET", f"/api/pos/square/callback?error=access_denied&state={state}")
+    deny = back(f"error=access_denied&state={state}", nonce)
     check("the owner said no on Square → error shown, nothing connected", "caisse=erreur" in deny.headers.get("location", "") and db.pos_connections.count_documents({}) == 0)
-    r = http("POST", "/api/owner/pos/square/connect", bearer=OWN)
-    state = parse_qs(urlsplit(r.json()["url"]).query)["state"][0]
-    ok = http("GET", f"/api/pos/square/callback?code=code-1&state={state}")
+
+    print("\nConnecting: someone else's link (OAuth CSRF, pentest 2026-11-28)")
+    _, st_att, nonce_att = begin(OWN3)                 # the attacker's own « Connecter » (t3)
+    _, _, nonce_vic = begin(OWN)                       # the victim's browser has its own cookie (or none at all)
+    csrf = back(f"code=code-1&state={st_att}", nonce_vic)
+    check("attacker's link approved in the victim's browser → refused, the victim's Square is NOT linked to the attacker",
+          "caisse=erreur" in csrf.headers.get("location", "") and db.pos_connections.count_documents({"merchant_id": "MERCH1"}) == 0)
+    csrf2 = back(f"code=code-1&state={st_att}")
+    check("…and with no cookie at all → refused", "caisse=erreur" in csrf2.headers.get("location", "") and db.pos_connections.count_documents({}) == 0)
+    _, st_att2, _ = begin(OWN3)
+    csrf3 = back(f"code=code-1&state={st_att2}", "x" * 43)
+    check("…and with a made-up cookie → refused", "caisse=erreur" in csrf3.headers.get("location", "") and db.pos_connections.count_documents({}) == 0)
+    check("the refusal says why in plain words (lien)", "raison=lien" in csrf.headers.get("location", ""))
+
+    _, state, nonce = begin(OWN)
+    ok = back(f"code=code-1&state={state}", nonce)
     conn = db.pos_connections.find_one({"tenant_id": "t1"})
-    check("a good code → connected, back on Paramètres", "caisse=ok" in ok.headers.get("location", "") and conn and conn["status"] == "connected")
+    check("a good code in the same browser → connected, back on Paramètres", "caisse=ok" in ok.headers.get("location", "") and conn and conn["status"] == "connected")
+    check("the cookie is cleared once used", COOKIE in ok.headers.get("set-cookie", "") and "max-age=0" in ok.headers.get("set-cookie", "").lower())
     check("Square shop, merchant id and both locations saved", conn["merchant_id"] == "MERCH1" and [l["id"] for l in conn["locations"]] == ["LOC1", "LOC2"])
     raw = json.dumps(conn, default=str)
     check("the tokens are sealed in the database, never in clear", "EAAA-secret" not in raw and "EQAA-secret" not in raw and conn.get("tokens_sealed"))
-    again = http("GET", f"/api/pos/square/callback?code=code-1&state={state}")
+    again = back(f"code=code-1&state={state}", nonce)
     check("the same state used twice → refused (one use)", "caisse=erreur" in again.headers.get("location", ""))
-    r3 = http("POST", "/api/owner/pos/square/connect", bearer=OWN3)
-    st3 = parse_qs(urlsplit(r3.json()["url"]).query)["state"][0]
-    dup = http("GET", f"/api/pos/square/callback?code=code-again&state={st3}")
+    _, st3, n3 = begin(OWN3)
+    dup = back(f"code=code-again&state={st3}", n3)
     check("the same Square shop cannot be linked to a second FidClic business",
           "caisse=erreur" in dup.headers.get("location", "") and db.pos_connections.count_documents({"tenant_id": "t3"}) == 0)
-    old = http("POST", "/api/owner/pos/square/connect", bearer=OWN3)
-    st_old = parse_qs(urlsplit(old.json()["url"]).query)["state"][0]
+    _, st_old, n_old = begin(OWN3)
     db.pos_oauth_states.update_many({}, {"$set": {"expires_at": now - dt.timedelta(minutes=1)}})
-    exp = http("GET", f"/api/pos/square/callback?code=code-2&state={st_old}")
+    exp = back(f"code=code-2&state={st_old}", n_old)
     check("an expired state (over 10 min) → refused", "caisse=erreur" in exp.headers.get("location", "") and db.pos_connections.count_documents({"tenant_id": "t3"}) == 0)
     CID = conn["id"]
 
@@ -221,19 +258,27 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     check("Centre → main, Nord → b2 saved", r.status_code == 200 and db.pos_connections.find_one({"id": CID})["location_map"] == {"LOC1": "main", "LOC2": "b2"})
 
     print("\nCustomer push (name + card code only)")
-    n = P.sync_customers(CID, limit=50)
     pushed = [c for c in square["calls"] if c["path"] == "/v2/customers/bulk-create"]
     body = pushed[-1]["json"]["customers"] if pushed else {}
-    check("the live cards of this business pushed, not the deleted one, not another shop's",
-          n == 2 and set(body) == {"c1", "c2"})
-    check("Inès goes as given/family name + her card's code", body.get("c1", {}).get("given_name") == "Inès" and body["c1"].get("family_name") == "Fontaine"
-          and "FT-AAA111" in body["c1"].get("reference_id", ""))
+    check("the cards go to Square right at connect (no hours of waiting, load 2026-11-28)",
+          db.pos_customer_links.count_documents({"conn_id": CID}) == 2)
+    sent = {re.search(r"FT-[A-Z0-9]+", v.get("reference_id", "")).group(0): v for v in body.values()}
+    check("the live cards of this business pushed, not the deleted one, not another shop's", set(sent) == {"FT-AAA111", "FT-BBB222"})
+    ines = sent.get("FT-AAA111", {})
+    check("Inès goes as given/family name + her card's code", ines.get("given_name") == "Inès" and ines.get("family_name") == "Fontaine")
     check("no phone, no e-mail, no birthday sent to Square", all("0612345678" not in json.dumps(v) and "ines@ex.fr" not in json.dumps(v) for v in body.values()))
-    check("links kept per card", db.pos_customer_links.count_documents({"conn_id": CID}) == 2)
+    check("links say FidClic made them (so FidClic may delete them)", db.pos_customer_links.count_documents({"conn_id": CID, "origin": "pushed"}) == 2)
     square["calls"].clear()
     check("a second run pushes nobody again", P.sync_customers(CID, limit=50) == 0 and not square["calls"])
-    db.customers.insert_one({"id": "c3", "tenant_id": "t1", "barcode_id": "FT-CCC333", "name": "Zoé", "visits": 0, "points": 0, "created_at": now})
-    check("a new card later → pushed alone", P.sync_customers(CID, limit=50) == 1)
+    db.customers.insert_one({"id": "c3", "tenant_id": "t1", "barcode_id": "FT-CCC333", "name": "Zoé", "visits": 0, "points": 0, "created_at": now,
+                             "last_visit_date": now - dt.timedelta(days=400)})
+    db.customers.insert_one({"id": "c4", "tenant_id": "t1", "barcode_id": "FT-DDD444", "name": "Habitué", "visits": 30, "points": 0, "created_at": now,
+                             "last_visit_date": now})
+    square["calls"].clear()
+    check("new cards later → pushed, a limit of 1 takes the regular first", P.sync_customers(CID, limit=1) == 1
+          and "FT-DDD444" in json.dumps(square["calls"][-1]["json"]["customers"]))
+    check("…and the rest on the next run", P.sync_customers(CID, limit=50) == 1)
+    check("a tick pushes thousands, not 200 (load 2026-11-28)", P.SYNC_PER_TICK >= 2000 and P.SYNC_TOTAL_PER_TICK >= 5000)
 
     print("\nWebhook: who is talking")
     check("no signature → 401, nothing stored", hook(pay_obj("PX1", cust="SQ-c1"), sig="").status_code == 401 and db.pos_events.count_documents({}) == 0)
@@ -299,6 +344,43 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     r = hook({"id": "R9", "status": "COMPLETED", "amount_money": {"amount": 100, "currency": "EUR"}, "payment_id": "UNKNOWN", "location_id": "LOC1",
               "created_at": "2026-11-28T11:05:00Z"}, kind="refund")
     check("a refund of a sale FidClic never saw → kept, no crash", r.status_code == 200 and db.pos_tickets.find_one({"ticket_id": "R9"}))
+    check("…it waits for its sale (Square does not promise the order)", db.pos_tickets.find_one({"ticket_id": "R9"})["status"] == "refund_waiting")
+
+    print("\nRefund BEFORE its sale (pentest 2026-11-28)")
+    def refund_obj(rid, pid, amount):
+        return {"id": rid, "status": "COMPLETED", "amount_money": {"amount": amount, "currency": "EUR"}, "payment_id": pid,
+                "location_id": "LOC1", "created_at": "2026-11-28T11:10:00Z"}
+    v0 = db.customers.find_one({"id": "c1"})["visits"]
+    hook(refund_obj("RE1", "PE1", 2000), kind="refund")
+    hook(pay_obj("PE1", amount=2000, cust="SQ-c1"))
+    check("paid 20 €, refunded 20 € — refund first → no visit, the card does not move",
+          not db.visits.find_one({"external_id": "square:PE1"}) and db.customers.find_one({"id": "c1"})["visits"] == v0)
+    check("the sale says refunded, its refund is done", db.pos_tickets.find_one({"ticket_id": "PE1"})["status"] == "refunded"
+          and db.pos_tickets.find_one({"ticket_id": "RE1"})["status"] == "refund_done")
+    hook(refund_obj("RE2", "PE2", 500), kind="refund")
+    hook(pay_obj("PE2", amount=2000, cust="SQ-c1"))
+    check("refund first, but only 5 € of 20 € → the visit is made, the sale says partial",
+          db.visits.find_one({"external_id": "square:PE2"}) and db.pos_tickets.find_one({"ticket_id": "PE2"})["status"] == "partial_refund"
+          and db.customers.find_one({"id": "c1"})["visits"] == v0 + 1)
+    hook(refund_obj("RE3", "PE2", 1500), kind="refund")
+    check("…the rest refunded later → the visit is cancelled", not db.visits.find_one({"external_id": "square:PE2"})
+          and db.customers.find_one({"id": "c1"})["visits"] == v0)
+    # the race: the refund looks while the sale is still being applied (it sees « processing ») and waits
+    hook(pay_obj("PE3", amount=1000, cust="SQ-c1"))
+    db.pos_tickets.insert_one({"provider": "square", "ticket_id": "RE4", "tenant_id": "t1", "conn_id": CID, "kind": "refund", "amount": 10.0,
+                               "currency": "EUR", "location_id": "LOC1", "refund_of": "PE3", "at": now, "created_at": now, "status": "refund_waiting"})
+    check("(race set-up: the sale is applied, its refund is waiting)", db.visits.find_one({"external_id": "square:PE3"}) is not None)
+    P.run_due(now)
+    check("the tick settles a waiting refund → the visit is cancelled", not db.visits.find_one({"external_id": "square:PE3"})
+          and db.pos_tickets.find_one({"ticket_id": "RE4"})["status"] == "refund_done"
+          and db.pos_tickets.find_one({"ticket_id": "PE3"})["status"] == "refunded")
+    square["payments"] = [pay_obj("PE4", amount=1200, cust="SQ-c1")]
+    square["refunds"] = [refund_obj("RE5", "PE4", 1200)]
+    hook(refund_obj("RE5", "PE4", 1200), kind="refund")      # the door got the refund, never the sale
+    P.reconcile(db.pos_connections.find_one({"id": CID}, {"_id": 0}), now)
+    check("night check brings the missed sale of a refund already seen → no visit", not db.visits.find_one({"external_id": "square:PE4"})
+          and db.pos_tickets.find_one({"ticket_id": "PE4"})["status"] == "refunded")
+    square["payments"], square["refunds"] = [], []
 
     print("\nThe plan goes off")
     db.tenants.update_one({"id": "t1"}, {"$set": {"plan": "silver"}})
@@ -317,7 +399,7 @@ with mongomock.patch(servers=(("localhost", 27017),)):
           and db.pos_events.count_documents({"state": "pending"}) >= 1)
     out = P.run_due(now)
     check("the tick applies the waiting ones", db.visits.count_documents({"tenant_id": "t1"}) - before == 6 and db.pos_events.count_documents({"state": "pending"}) == 0)
-    P.INLINE_PER_15MIN = 600
+    P.INLINE_PER_15MIN = 3000
     square["fail_customer_lookup"] = True
     hook(pay_obj("F1", amount=100, cust="SQ-unknown-yet"))
     e = db.pos_events.find_one({"ticket.ticket_id": "F1"})
@@ -372,6 +454,46 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     P.run_due(dst)
     check("DST night: 03:30 Paris is still « that night » (2027-03-28)", db.pos_connections.find_one({"id": CID})["last_reconcile_day"] == "2027-03-28")
 
+    print("\nA big night check is cut into pieces (load 2026-11-28)")
+    P.RECONCILE_MAX_APPLY = 2
+    db.pos_connections.update_one({"id": CID}, {"$set": {"last_reconcile_day": "2027-03-28"}})
+    square["payments"] = [pay_obj(f"NB{i}", amount=500, cust="SQ-c1") for i in range(5)]
+    n3 = dt.datetime(2027, 3, 29, 1, 30, tzinfo=dt.timezone.utc)      # 03:30 Paris
+    P.run_due(n3)
+    got = db.visits.count_documents({"external_id": {"$regex": "^square:NB"}})
+    c = db.pos_connections.find_one({"id": CID})
+    check("one tick applies at most RECONCILE_MAX_APPLY missed tickets", got == 2)
+    check("…and the night is not marked done while some are left", c.get("last_reconcile_day") != "2027-03-29" and c.get("reconcile_open"))
+    P.run_due(n3 + dt.timedelta(minutes=15))
+    P.run_due(n3 + dt.timedelta(minutes=30))
+    c = db.pos_connections.find_one({"id": CID})
+    check("the next ticks finish it, nothing twice", db.visits.count_documents({"external_id": {"$regex": "^square:NB"}}) == 5
+          and c.get("last_reconcile_day") == "2027-03-29" and not c.get("reconcile_open"))
+    P.RECONCILE_MAX_APPLY = 400
+    square["payments"] = []
+
+    print("\nThe tick is fair between shops (load 2026-11-28)")
+    db.pos_connections.insert_one({"id": "pos_other", "tenant_id": "t3", "provider": "square", "label": "Square", "merchant_id": "MERCH9",
+                                   "status": "connected", "created_at": now, "locations": [], "location_map": {},
+                                   "tokens_sealed": P._seal({"access_token": "EAAA-x", "refresh_token": "r"}), "expires_at": now + dt.timedelta(days=60)})
+    for i in range(10):
+        db.pos_events.insert_one({"id": f"fa{i}", "provider": "square", "conn_id": CID, "tenant_id": "t1", "state": "pending", "attempts": 0,
+                                  "at": now - dt.timedelta(minutes=30 - i), "ticket": {**P._ticket_out({"provider": "square", "ticket_id": f"FA{i}", "kind": "sale",
+                                  "amount": 1.0, "currency": "EUR", "location_id": "LOC1", "customer_id": None, "refund_of": None, "at": now})}})
+    db.pos_events.insert_one({"id": "fb0", "provider": "square", "conn_id": "pos_other", "tenant_id": "t3", "state": "pending", "attempts": 0,
+                              "at": now, "ticket": {"provider": "square", "ticket_id": "FB0", "kind": "sale", "amount": 1.0, "currency": "EUR",
+                                                    "location_id": "X", "customer_id": None, "refund_of": None, "at": now}})
+    P.TICK_EVENTS, P.TICK_PER_CONN = 5, 3
+    P.run_due(now)
+    check("a shop with a long queue does not starve another shop's ticket", db.pos_events.find_one({"id": "fb0"})["state"] == "done")
+    check("…and gets at most its share per tick", db.pos_events.count_documents({"id": {"$regex": "^fa"}, "state": "done"}) == 3)
+    P.TICK_EVENTS, P.TICK_PER_CONN = 2000, 600
+    P.run_due(now)
+    check("the next tick finishes the queue", db.pos_events.count_documents({"id": {"$regex": "^f[ab]"}, "state": "pending"}) == 0)
+    check("defaults let a lunch rush through: 3000 events / 15 min inline, 2000 a tick",
+          P.INLINE_PER_15MIN >= 3000 and P.TICK_EVENTS >= 2000)
+    db.pos_connections.delete_one({"id": "pos_other"})
+
     print("\nCheck now (owner button)")
     r = http("POST", f"/api/owner/pos/connections/{CID}/sync", bearer=OWN)
     check("« Vérifier maintenant » runs", r.status_code == 200)
@@ -379,15 +501,66 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     check("twice within 5 minutes → 429 (no hammering Square)", r.status_code == 429)
     check("another business → 404", http("POST", f"/api/owner/pos/connections/{CID}/sync", bearer=OWN3).status_code == 404)
 
+    print("\nA deleted card leaves Square too (pentest 2026-11-28)")
+    square["deleted"].clear()
+    db.customers.update_one({"id": "c3"}, {"$set": {"deleted_at": now}})
+    db.customers.update_one({"id": "c2"}, {"$set": {"deleted_at": now}})        # c2 was linked by FidClic's push
+    sq_c3 = db.pos_customer_links.find_one({"conn_id": CID, "customer_id": "c3"})["provider_customer_id"]
+    P.run_due(now)
+    check("the Square customer FidClic made for a deleted card is deleted at Square", sq_c3 in square["deleted"])
+    check("…and the link is gone", not db.pos_customer_links.find_one({"conn_id": CID, "customer_id": "c3"}))
+    db.pos_customer_links.update_one({"conn_id": CID, "customer_id": "c1"}, {"$set": {"origin": "found", "provider_customer_id": "SQ-HANDMADE"}})
+    db.customers.update_one({"id": "c1"}, {"$set": {"card_deleted_at": now}})
+    P.run_due(now)
+    check("a Square customer the shop typed by hand is never deleted by FidClic (only unlinked)",
+          "SQ-HANDMADE" not in square["deleted"] and not db.pos_customer_links.find_one({"conn_id": CID, "customer_id": "c1"}))
+    db.customers.update_many({"id": {"$in": ["c1", "c2"]}}, {"$unset": {"deleted_at": "", "card_deleted_at": ""}})
+    P.sync_customers(CID, limit=50)
+    check("a restored card goes back to Square (client restore is allowed any time)",
+          db.pos_customer_links.find_one({"conn_id": CID, "customer_id": "c2", "origin": "pushed"}) is not None)
+    db.customers.update_one({"id": "c4"}, {"$set": {"paused_at": now}})
+    P.run_due(now)
+    check("a paused client stays at Square (pause = no messages, the card still works)",
+          db.pos_customer_links.find_one({"conn_id": CID, "customer_id": "c4"}) is not None)
+
+    print("\nThe token key (pentest 2026-11-28)")
+    saved_jwt = os.environ.get("JWT_SECRET")
+    os.environ["VERCEL"] = "1"
+    os.environ["JWT_SECRET"] = "a-real-login-key-for-this-test"          # Vercel always has one
+    OWNV = auth.create_access_token({"sub": "o@burger.fr", "role": "business_owner", "tenant_id": "t1"})
+    saved_k = os.environ.pop("POS_TOKENS_SECRET", None)
+    st = http("GET", "/api/owner/pos", bearer=OWNV).json()
+    check("on Vercel without POS_TOKENS_SECRET → Square is « bientôt », never sealed with the login key",
+          not next(p for p in st["providers"] if p["name"] == "square")["configured"])
+    check("…and connect refuses (409)", http("POST", "/api/owner/pos/square/connect", bearer=OWNV).status_code == 409)
+    os.environ["POS_TOKENS_SECRET"] = "a-separate-secret-for-caisse-tokens"
+    check("with its own key → offered", next(p for p in http("GET", "/api/owner/pos", bearer=OWNV).json()["providers"] if p["name"] == "square")["configured"])
+    os.environ.pop("VERCEL")
+    os.environ.pop("POS_TOKENS_SECRET")
+    if saved_jwt is None:
+        os.environ.pop("JWT_SECRET")
+    else:
+        os.environ["JWT_SECRET"] = saved_jwt
+    if saved_k:
+        os.environ["POS_TOKENS_SECRET"] = saved_k
+
     print("\nDisconnecting")
     check("a manager cannot disconnect", http("DELETE", f"/api/owner/pos/connections/{CID}", bearer=MAN).status_code == 403)
     check("another business cannot", http("DELETE", f"/api/owner/pos/connections/{CID}", bearer=OWN3).status_code == 404)
+    square["deleted"].clear()
+    mine = {l["provider_customer_id"] for l in db.pos_customer_links.find({"conn_id": CID, "origin": "pushed"})}
     r = http("DELETE", f"/api/owner/pos/connections/{CID}", bearer=OWN)
     c = db.pos_connections.find_one({"id": CID})
-    check("disconnected: Square told, tokens wiped, status kept for history",
-          r.status_code == 200 and square["revoked"] and c["status"] == "disconnected" and not c.get("tokens_sealed"))
-    hook(pay_obj("AFTER1", amount=500, cust="SQ-c1"))
+    check("« Déconnecter » stops at once: status disconnecting", r.status_code == 200 and c["status"] == "disconnecting")
+    hook(pay_obj("AFTER1", amount=500, cust="SQ-c4"))
     check("after disconnecting, a sale changes nothing", not db.visits.find_one({"external_id": "square:AFTER1"}))
+    check("the page no longer offers it as connected", all(x["status"] != "connected" for x in http("GET", "/api/owner/pos", bearer=OWN).json()["connections"]))
+    P.run_due(now)
+    c = db.pos_connections.find_one({"id": CID})
+    check("the tick removes from Square every customer FidClic made", mine and mine <= set(square["deleted"]))
+    check("…then tells Square, wipes the tokens and keeps the history",
+          square["revoked"] and c["status"] == "disconnected" and not c.get("tokens_sealed")
+          and db.pos_customer_links.count_documents({"conn_id": CID}) == 0)
     check("the past tickets and visits stay", db.visits.find_one({"external_id": "square:P1"}) is not None)
 
     print(f"\n{passed} passed, {failed} failed")

@@ -20,6 +20,7 @@ import base64
 import hashlib
 import hmac
 import os
+import secrets
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 from urllib.parse import urlencode
@@ -219,14 +220,30 @@ class SquareAdapter:
 
     def push_customers(self, token: str, rows: List[Dict[str, Any]]) -> Dict[str, str]:
         out: Dict[str, str] = {}
+        # Square takes each map key as an idempotency key and remembers it: a card pushed again
+        # (restored after a delete, a lost link) under the same key got the old, deleted customer
+        # back (sandbox 2026-11-28). A fresh key per push; FidClic's links do the dedupe.
+        run = secrets.token_hex(6)
         for i in range(0, len(rows or []), BATCH):
             chunk = rows[i:i + BATCH]
-            body = {"customers": {r["fidclic_id"]: {k: v for k, v in {
-                "given_name": (r.get("given_name") or "")[:100], "family_name": (r.get("family_name") or "")[:100],
-                "reference_id": r["reference_id"], "note": "Carte FidClic"}.items() if v} for r in chunk}}
+            keys = {hashlib.sha256(f"{run}:{r['fidclic_id']}".encode()).hexdigest()[:40]: r["fidclic_id"] for r in chunk}
+            by_fid = {r["fidclic_id"]: r for r in chunk}
+            body = {"customers": {k: {f: v for f, v in {
+                "given_name": (by_fid[fid].get("given_name") or "")[:100], "family_name": (by_fid[fid].get("family_name") or "")[:100],
+                "reference_id": by_fid[fid]["reference_id"], "note": "Carte FidClic"}.items() if v} for k, fid in keys.items()}}
             res = self._call("POST", "/v2/customers/bulk-create", token=token, json=body).get("responses") or {}
-            for fid, one in res.items():
+            for k, one in res.items():
                 cid = ((one or {}).get("customer") or {}).get("id")
-                if cid:
-                    out[fid] = str(cid)
+                if cid and k in keys:
+                    out[keys[k]] = str(cid)
         return out
+
+    def delete_customers(self, token: str, customer_ids: List[str]) -> int:
+        """Removes the Square customers FidClic made (a deleted card, a disconnected caisse)."""
+        n = 0
+        ids = [i for i in (customer_ids or []) if i]
+        for i in range(0, len(ids), BATCH):
+            chunk = ids[i:i + BATCH]
+            self._call("POST", "/v2/customers/bulk-delete", token=token, json={"customer_ids": chunk})
+            n += len(chunk)
+        return n

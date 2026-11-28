@@ -43,6 +43,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import hmac
 import json
 import os
 import secrets
@@ -66,19 +67,25 @@ READERS = ["business_owner", "administrateur"]
 PARIS = ZoneInfo("Europe/Paris")
 
 STATE_TTL_MIN = 10
-INLINE_PER_15MIN = 600          # events a connection may have applied at once in 15 min; past it, the tick does it
+INLINE_PER_15MIN = 3000         # events a connection may have applied at once in 15 min; past it, the tick does it
 MAX_ATTEMPTS = 5
-TICK_EVENTS = 300               # pending events the tick handles per run, all connections
-SYNC_PER_TICK = 200             # cards pushed per connection per tick
-SYNC_TOTAL_PER_TICK = 1000
+TICK_EVENTS = 2000              # pending events the tick handles per run, all connections
+TICK_PER_CONN = 600             # …and per connection, so one shop's queue never starves the others
+SYNC_PER_TICK = 2000            # cards pushed per connection per tick (20 calls of 100)
+SYNC_TOTAL_PER_TICK = 5000
+CONNECT_PUSH = 500              # pushed at once when the owner connects (regulars first)
+CLEANUP_PER_TICK = 1000         # Square customers removed per tick (deleted cards, a disconnected caisse)
+RECONCILE_MAX_APPLY = 400       # missed tickets the night check applies per tick; the rest on the next ticks
+RECONCILE_LEASE = timedelta(minutes=10)
+WAITING_REFUND_DAYS = 7         # a refund whose sale never came is looked at again for 7 days
+TICK_BUDGET_S = 200             # the function may run 360 s and the tick does other work too
+COOKIE = "fc_pos_nonce"
 MAX_AMOUNT = 100000.0           # the API's own ceiling for one visit
 RECONCILE_HOUR = 3              # Paris
 REFRESH_BEFORE = timedelta(days=7)
 MANUAL_COOLDOWN_S = 300
 MAX_BODY = 256 * 1024
 CLAIM_STALE_S = 60
-FINAL = {"matched", "unmatched", "rejected", "not_applied", "refused", "refunded", "partial_refund",
-         "refund_manual", "refund_unknown_sale", "refund_done"}
 
 
 def init(db):
@@ -126,11 +133,24 @@ def _err(status: int, code: str, message: str) -> HTTPException:
 # ---------------------------------------------------------------------------
 # Sealed tokens
 # ---------------------------------------------------------------------------
+def _on_vercel() -> bool:
+    return bool(os.environ.get("VERCEL"))
+
+
+def key_ok() -> bool:
+    """The caisse tokens have their own key on Vercel (pentest 2026-11-28): never the login key,
+    so a JWT_SECRET leak does not open the Square tokens and rotating it does not cut the caisses."""
+    return bool((os.environ.get("POS_TOKENS_SECRET") or "").strip()) or not _on_vercel()
+
+
 def _fernet():
     from cryptography.fernet import Fernet
     from cryptography.hazmat.primitives import hashes
     from cryptography.hazmat.primitives.kdf.hkdf import HKDF
-    secret = (os.environ.get("POS_TOKENS_SECRET") or os.environ.get("JWT_SECRET") or "fidclic-dev-secret").encode()
+    own = (os.environ.get("POS_TOKENS_SECRET") or "").strip()
+    if not own and _on_vercel():
+        raise PosError("POS_TOKENS_SECRET manquant.", code="not_configured")
+    secret = (own or os.environ.get("JWT_SECRET") or "fidclic-dev-secret").encode()
     key = HKDF(algorithm=hashes.SHA256(), length=32, salt=b"fidclic-pos", info=b"caisse-tokens").derive(secret)
     return Fernet(base64.urlsafe_b64encode(key))
 
@@ -250,6 +270,29 @@ def _find_card(conn: Dict[str, Any], adapter, provider_customer_id: Optional[str
     return c
 
 
+def _refunded(provider: str, sale_id: str) -> float:
+    """Every refund seen for a sale, whatever came first (Square does not promise the order)."""
+    return float(sum(float(r.get("amount") or 0) for r in _db.pos_tickets.find(
+        {"provider": provider, "kind": "refund", "refund_of": sale_id}, {"_id": 0, "amount": 1})))
+
+
+def _cancel(conn: Dict[str, Any], provider: str, sale_id: str, refund_id: str) -> str:
+    from features import merchant_api as M
+    try:
+        M.cancel_visit(f"{provider}:{sale_id}", body=M.CancelIn(reason="Remboursement caisse", external_id=f"{provider}:refund:{refund_id}"),
+                       c=_caller(conn))
+        return "refunded"
+    except HTTPException as e:
+        if not 400 <= e.status_code < 500:
+            raise
+        return "refund_manual"
+
+
+def _close_waiting(provider: str, sale_id: str) -> None:
+    _db.pos_tickets.update_many({"provider": provider, "kind": "refund", "refund_of": sale_id, "status": "refund_waiting"},
+                                {"$set": {"status": "refund_done", "sale_ticket_id": sale_id, "done_at": _now()}})
+
+
 def _apply_sale(conn: Dict[str, Any], adapter, t: Dict[str, Any]) -> str:
     from features import merchant_api as M
     branch = (conn.get("location_map") or {}).get(t.get("location_id") or "") or conn.get("default_branch") or None
@@ -260,11 +303,15 @@ def _apply_sale(conn: Dict[str, Any], adapter, t: Dict[str, Any]) -> str:
         amount = float(t.get("amount") or 0)
         if amount < 0 or amount > MAX_AMOUNT:
             return _finish(t, "rejected", reason="amount")
+        back = _refunded(t["provider"], t["ticket_id"])
+        if back > 0 and back >= amount - 0.005:          # refunded before it reached us: never credited
+            _close_waiting(t["provider"], t["ticket_id"])
+            return _finish(t, "refunded", refunded_amount=back, customer_id=None)
         if not _tenant_ok(conn["tenant_id"]):
             return _finish(t, "not_applied", reason="plan")
         cust = _find_card(conn, adapter, t.get("customer_id"))
         if not cust:
-            return _finish(t, "unmatched", customer_id=None)
+            return _finish(t, "unmatched", customer_id=None, refunded_amount=back or None)
         ext = f"{t['provider']}:{t['ticket_id']}"
         try:
             res = M.create_visit(M.VisitIn(customer=cust["id"], amount=round(amount, 2), branch_id=branch, external_id=ext),
@@ -278,51 +325,40 @@ def _apply_sale(conn: Dict[str, Any], adapter, t: Dict[str, Any]) -> str:
         if vid:
             _db.visits.update_one({"id": vid}, {"$set": {"source": "pos", "pos_provider": t["provider"], "pos_ticket_id": t["ticket_id"]}})
         _db.pos_connections.update_one({"id": conn["id"]}, {"$set": {"last_ticket_at": _now()}})
-        return _finish(t, "matched", customer_id=cust["id"], visit_id=vid)
+        status = "matched"
+        back = _refunded(t["provider"], t["ticket_id"])  # a refund that came while the visit was being made
+        if back > 0:
+            status = _cancel(conn, t["provider"], t["ticket_id"], "late") if back >= amount - 0.005 else "partial_refund"
+            _close_waiting(t["provider"], t["ticket_id"])
+        return _finish(t, status, customer_id=cust["id"], visit_id=vid, refunded_amount=back or None)
     except BaseException:
         _release(t)
         raise
 
 
 def _apply_refund(conn: Dict[str, Any], adapter, t: Dict[str, Any]) -> str:
-    from features import merchant_api as M
     row = _claim(t, conn, {})
     if row is None:
         return "duplicate"
-    added = False
     try:
         sale = _db.pos_tickets.find_one({"provider": t["provider"], "ticket_id": t.get("refund_of"), "tenant_id": conn["tenant_id"]}, {"_id": 0})
-        if not sale:
-            return _finish(t, "refund_unknown_sale")
-        after = _db.pos_tickets.find_one_and_update({"provider": t["provider"], "ticket_id": sale["ticket_id"]},
-                                                    {"$inc": {"refunded_amount": float(t.get("amount") or 0)}}, return_document=True) or sale
-        added = True
-        full = float(after.get("refunded_amount") or 0) >= float(sale.get("amount") or 0) - 0.005
-        if sale.get("status") == "matched" or (sale.get("status") == "partial_refund" and sale.get("visit_id")):
-            if full:
-                try:
-                    M.cancel_visit(f"{t['provider']}:{sale['ticket_id']}",
-                                   body=M.CancelIn(reason="Remboursement caisse", external_id=f"{t['provider']}:refund:{t['ticket_id']}"),
-                                   c=_caller(conn))
-                    _db.pos_tickets.update_one({"provider": t["provider"], "ticket_id": sale["ticket_id"]}, {"$set": {"status": "refunded"}})
-                except HTTPException as e:
-                    if not 400 <= e.status_code < 500:
-                        raise
-                    _db.pos_tickets.update_one({"provider": t["provider"], "ticket_id": sale["ticket_id"]}, {"$set": {"status": "refund_manual"}})
-            else:
-                _db.pos_tickets.update_one({"provider": t["provider"], "ticket_id": sale["ticket_id"]}, {"$set": {"status": "partial_refund"}})
-        elif sale.get("status") in ("unmatched", "not_applied", "rejected"):
-            _db.pos_tickets.update_one({"provider": t["provider"], "ticket_id": sale["ticket_id"]},
-                                       {"$set": {"refund_state": "full" if full else "partial"}})
+        if not sale or sale.get("status") in ("new", "processing"):
+            # its sale is not here yet (or being applied): the sale counts this refund when it lands,
+            # and the tick looks again (pentest 2026-11-28: the visit was kept)
+            return _finish(t, "refund_waiting")
+        back = _refunded(t["provider"], sale["ticket_id"])
+        full = back >= float(sale.get("amount") or 0) - 0.005
+        key = {"provider": t["provider"], "ticket_id": sale["ticket_id"]}
+        st = sale.get("status")
+        if st == "matched" or (st == "partial_refund" and sale.get("visit_id")):
+            new = _cancel(conn, t["provider"], sale["ticket_id"], t["ticket_id"]) if full else "partial_refund"
+            _db.pos_tickets.update_one(key, {"$set": {"status": new, "refunded_amount": back}})
+        elif st in ("unmatched", "not_applied", "rejected", "refused"):
+            _db.pos_tickets.update_one(key, {"$set": {"refund_state": "full" if full else "partial", "refunded_amount": back}})
+        else:
+            _db.pos_tickets.update_one(key, {"$set": {"refunded_amount": back}})
         return _finish(t, "refund_done", sale_ticket_id=sale["ticket_id"])
     except BaseException:
-        # the refund's amount was added before the work: take it back so a retry counts it once
-        try:
-            if added:
-                _db.pos_tickets.update_one({"provider": t["provider"], "ticket_id": t.get("refund_of")},
-                                           {"$inc": {"refunded_amount": -float(t.get("amount") or 0)}})
-        except Exception:
-            pass
         _release(t)
         raise
 
@@ -340,7 +376,7 @@ def apply_ticket(conn: Dict[str, Any], t: Dict[str, Any], adapter=None) -> str:
 def _conn_for(provider: str, merchant_id: Optional[str]) -> Optional[Dict[str, Any]]:
     if not merchant_id:
         return None
-    return _db.pos_connections.find_one({"provider": provider, "merchant_id": merchant_id, "status": {"$ne": "disconnected"}}, {"_id": 0})
+    return _db.pos_connections.find_one({"provider": provider, "merchant_id": merchant_id, "status": {"$in": ["connected", "error"]}}, {"_id": 0})
 
 
 def _ticket_out(t: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
@@ -350,7 +386,7 @@ def _ticket_out(t: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
 
 
 def _run_event(ev: Dict[str, Any]) -> None:
-    conn = _db.pos_connections.find_one({"id": ev.get("conn_id"), "status": {"$ne": "disconnected"}}, {"_id": 0}) if ev.get("conn_id") else None
+    conn = _db.pos_connections.find_one({"id": ev.get("conn_id"), "status": {"$in": ["connected", "error"]}}, {"_id": 0}) if ev.get("conn_id") else None
     if not conn:
         _db.pos_events.update_one({"provider": ev["provider"], "id": ev["id"]}, {"$set": {"state": "ignored", "reason": "no_connection", "done_at": _now()}})
         return
@@ -418,15 +454,18 @@ def _split(name: str):
     return (parts[0] if parts else "Client"), " ".join(parts[1:])
 
 
-def sync_customers(conn_id: str, limit: int = SYNC_PER_TICK) -> int:
+def sync_customers(conn_id: str, limit: int = SYNC_PER_TICK, budget_s: float = 60.0) -> int:
+    """Live cards → Square customers, regulars first (load 2026-11-28: the newest
+    shop waited hours). Only name + the card's code leave."""
     conn = _db.pos_connections.find_one({"id": conn_id, "status": "connected"}, {"_id": 0})
     if not conn or not _tenant_ok(conn["tenant_id"]):
         return 0
     adapter = POS.get(conn["provider"])
+    t0 = _now()
     linked = {l["customer_id"] for l in _db.pos_customer_links.find({"conn_id": conn_id}, {"_id": 0, "customer_id": 1})}
     rows = []
     for c in _db.customers.find({"tenant_id": conn["tenant_id"], "barcode_id": {"$exists": True, "$ne": None}, **_live()},
-                                {"_id": 0, "id": 1, "name": 1, "barcode_id": 1}).sort("created_at", 1):
+                                {"_id": 0, "id": 1, "name": 1, "barcode_id": 1}).sort([("last_visit_date", -1), ("created_at", -1)]):
         if c["id"] in linked or not c.get("barcode_id"):
             continue
         given, family = _split(c.get("name") or "")
@@ -436,30 +475,95 @@ def sync_customers(conn_id: str, limit: int = SYNC_PER_TICK) -> int:
             break
     if not rows:
         return 0
-    made = adapter.push_customers(_token(conn), rows)
+    done = 0
     refs = {r["fidclic_id"]: r["reference_id"] for r in rows}
-    for fid, pcid in made.items():
-        _db.pos_customer_links.update_one({"conn_id": conn_id, "customer_id": fid}, {"$set": {
-            "tenant_id": conn["tenant_id"], "provider": conn["provider"], "provider_customer_id": pcid,
-            "reference_id": refs.get(fid), "at": _now()}}, upsert=True)
+    for n in range(0, len(rows), 100):
+        if (_now() - t0).total_seconds() > budget_s:
+            break
+        made = adapter.push_customers(_token(conn), rows[n:n + 100])
+        for fid, pcid in made.items():
+            _db.pos_customer_links.update_one({"conn_id": conn_id, "customer_id": fid}, {"$set": {
+                "tenant_id": conn["tenant_id"], "provider": conn["provider"], "provider_customer_id": pcid,
+                "reference_id": refs.get(fid), "origin": "pushed", "at": _now()}}, upsert=True)
+        done += len(made)
     _db.pos_connections.update_one({"id": conn_id}, {"$set": {"customers_synced_at": _now()}})
-    return len(made)
+    return done
+
+
+def _gone_cards(conn: Dict[str, Any], limit: int) -> List[Dict[str, Any]]:
+    """Links whose FidClic card is deleted (or gone): what Square must forget."""
+    out: List[Dict[str, Any]] = []
+    links = list(_db.pos_customer_links.find({"conn_id": conn["id"]}, {"_id": 0, "customer_id": 1, "provider_customer_id": 1, "origin": 1}))
+    for n in range(0, len(links), 500):
+        chunk = links[n:n + 500]
+        ids = [l["customer_id"] for l in chunk]
+        alive = {c["id"] for c in _db.customers.find({"id": {"$in": ids}, "tenant_id": conn["tenant_id"], **_live()}, {"_id": 0, "id": 1})}
+        out += [l for l in chunk if l["customer_id"] not in alive]
+        if len(out) >= limit:
+            break
+    return out[:limit]
+
+
+def _forget(conn: Dict[str, Any], links: List[Dict[str, Any]]) -> int:
+    """Square forgets the customers FidClic made; a customer the shop typed by hand is only unlinked."""
+    mine = [l["provider_customer_id"] for l in links if l.get("origin") == "pushed" and l.get("provider_customer_id")]
+    if mine:
+        POS.get(conn["provider"]).delete_customers(_token(conn), mine)
+    if links:
+        _db.pos_customer_links.delete_many({"conn_id": conn["id"], "customer_id": {"$in": [l["customer_id"] for l in links]}})
+    return len(links)
+
+
+def cleanup_customers(conn: Dict[str, Any], limit: int = CLEANUP_PER_TICK) -> int:
+    return _forget(conn, _gone_cards(conn, limit))
+
+
+def _finish_disconnect(conn: Dict[str, Any], now: datetime) -> bool:
+    """« Déconnecter », the tick's part: Square forgets FidClic's customers (in pieces), then the tokens go."""
+    links = list(_db.pos_customer_links.find({"conn_id": conn["id"]}, {"_id": 0}).limit(CLEANUP_PER_TICK))
+    if links:
+        try:
+            _forget(conn, links)
+        except PosError as e:
+            if e.code not in ("unauthorized", "reconnect"):
+                raise
+            _db.pos_customer_links.delete_many({"conn_id": conn["id"]})   # Square no longer lets us in: nothing more we can delete
+        if _db.pos_customer_links.count_documents({"conn_id": conn["id"]}):
+            return False
+    tok = _open(conn).get("access_token")
+    if tok:
+        POS.get(conn["provider"]).revoke(tok)
+    _db.pos_connections.update_one({"id": conn["id"], "status": "disconnecting"},
+                                   {"$set": {"status": "disconnected", "disconnected_at": now, "error": None}, "$unset": {"tokens_sealed": ""}})
+    return True
 
 
 # ---------------------------------------------------------------------------
 # Night check and tokens
 # ---------------------------------------------------------------------------
-def reconcile(conn: Dict[str, Any], now: Optional[datetime] = None, begin: Optional[datetime] = None) -> int:
+def reconcile(conn: Dict[str, Any], now: Optional[datetime] = None, begin: Optional[datetime] = None,
+              max_apply: Optional[int] = None) -> Dict[str, Any]:
+    """The caisse's own list of tickets, and whatever we missed — at most max_apply now (load
+    2026-11-28: 3 000 missed took 227 s in one tick). {applied, left}."""
     now = now or _now()
+    max_apply = RECONCILE_MAX_APPLY if max_apply is None else max_apply
     adapter = POS.get(conn["provider"])
     start = begin or ((_aware(conn.get("last_reconcile_at")) or _aware(conn.get("created_at")) or now) - timedelta(hours=2))
     locs = [l["id"] for l in conn.get("locations") or [] if l.get("id")]
-    n = 0
     tickets = adapter.list_tickets(_token(conn), locs, start, now)
-    for t in sorted(tickets, key=lambda x: (x["kind"] == "refund", _aware(x.get("at")) or now)):
-        if apply_ticket(conn, t, adapter) not in ("duplicate",):
-            n += 1
-    return n
+    ids = [t["ticket_id"] for t in tickets]
+    known = set()
+    for n in range(0, len(ids), 500):
+        known |= {r["ticket_id"] for r in _db.pos_tickets.find(
+            {"provider": conn["provider"], "ticket_id": {"$in": ids[n:n + 500]}, "status": {"$nin": ["new", "processing"]}},
+            {"_id": 0, "ticket_id": 1})}
+    todo = [t for t in tickets if t["ticket_id"] not in known]
+    todo.sort(key=lambda x: (x["kind"] == "refund", _aware(x.get("at")) or now))
+    applied = 0
+    for t in todo[:max_apply]:
+        if apply_ticket(conn, t, adapter) != "duplicate":
+            applied += 1
+    return {"applied": applied, "left": max(0, len(todo) - max_apply)}
 
 
 def _refresh(conn: Dict[str, Any], now: datetime) -> None:
@@ -477,20 +581,85 @@ def _refresh(conn: Dict[str, Any], now: datetime) -> None:
                                                                 "status": "connected", "error": None}})
 
 
+def _night(conn: Dict[str, Any], now: datetime, today: str) -> int:
+    """Once per Paris day after 03:00; a big night goes on over the next ticks. A lease, not the
+    day, keeps two ticks apart, so a cut tick never loses the night."""
+    if not (conn.get("last_reconcile_day") != today or conn.get("reconcile_open")):
+        return 0
+    took = _db.pos_connections.update_one(
+        {"id": conn["id"], "$or": [{"reconcile_lease": {"$exists": False}}, {"reconcile_lease": None}, {"reconcile_lease": {"$lt": now}}]},
+        {"$set": {"reconcile_lease": now + RECONCILE_LEASE}})
+    if not getattr(took, "modified_count", 0):
+        return 0
+    try:
+        begin = _aware(conn.get("reconcile_begin")) if conn.get("reconcile_open") else None
+        if begin is None:
+            begin = (_aware(conn.get("last_reconcile_at")) or _aware(conn.get("created_at")) or now) - timedelta(hours=2)
+        res = reconcile(conn, now, begin=begin)
+        if res["left"]:
+            _db.pos_connections.update_one({"id": conn["id"]}, {"$set": {"reconcile_open": True, "reconcile_begin": begin}})
+        else:
+            _db.pos_connections.update_one({"id": conn["id"]}, {"$set": {"last_reconcile_day": today, "last_reconcile_at": now,
+                                                                        "reconcile_open": False, "reconcile_begin": None}})
+        return res["applied"]
+    finally:
+        _db.pos_connections.update_one({"id": conn["id"]}, {"$set": {"reconcile_lease": None}})
+
+
+def _drain_events(now: datetime, t0: datetime) -> int:
+    """Waiting events, oldest first, a fair share per connection (load 2026-11-28)."""
+    n = 0
+    for cid in _db.pos_events.distinct("conn_id", {"state": "pending"}):
+        if n >= TICK_EVENTS or (_now() - t0).total_seconds() > TICK_BUDGET_S:
+            break
+        for ev in list(_db.pos_events.find({"state": "pending", "conn_id": cid}, {"_id": 0}).sort("at", 1)
+                       .limit(min(TICK_PER_CONN, TICK_EVENTS - n))):
+            _run_event(ev)
+            n += 1
+    return n
+
+
+def _settle_waiting_refunds(now: datetime) -> int:
+    n = 0
+    for t in list(_db.pos_tickets.find({"status": "refund_waiting", "at": {"$gte": now - timedelta(days=WAITING_REFUND_DAYS)}},
+                                       {"_id": 0}).limit(500)):
+        conn = _db.pos_connections.find_one({"id": t.get("conn_id"), "status": {"$in": ["connected", "error"]}}, {"_id": 0})
+        if not conn:
+            continue
+        sale = _db.pos_tickets.find_one({"provider": t["provider"], "ticket_id": t.get("refund_of")}, {"_id": 0, "status": 1})
+        if not sale or sale.get("status") in ("new", "processing"):
+            continue
+        _db.pos_tickets.update_one({"provider": t["provider"], "ticket_id": t["ticket_id"], "status": "refund_waiting"}, {"$set": {"status": "new"}})
+        apply_ticket(conn, {**t, "at": _aware(t.get("at"))})
+        n += 1
+    return n
+
+
 def run_due(now: Optional[datetime] = None) -> Dict[str, Any]:
-    """The 15-minute tick: retries, tokens, cards out, the night check. Idempotent."""
+    """The 15-minute tick: retries, waiting refunds, tokens, cards out and back, the night check,
+    disconnections. Idempotent; stops starting new work past TICK_BUDGET_S."""
     now = now or _now()
-    out = {"events": 0, "refreshed": 0, "synced": 0, "reconciled": 0, "errors": 0}
+    t0 = _now()
+    out = {"events": 0, "refunds": 0, "refreshed": 0, "synced": 0, "forgotten": 0, "reconciled": 0, "disconnected": 0, "errors": 0}
     if _db is None:
         return out
-    for ev in list(_db.pos_events.find({"state": "pending"}, {"_id": 0}).sort("at", 1).limit(TICK_EVENTS)):
-        _run_event(ev)
-        out["events"] += 1
+    late = lambda: (_now() - t0).total_seconds() > TICK_BUDGET_S  # noqa: E731
+    out["events"] = _drain_events(now, t0)
+    try:
+        out["refunds"] = _settle_waiting_refunds(now)
+    except Exception as e:
+        out["errors"] += 1
+        print(f"pos: waiting refunds: {e}")
     paris = now.astimezone(PARIS)
     today = paris.strftime("%Y-%m-%d")
     synced = 0
-    for conn in list(_db.pos_connections.find({"status": {"$in": ["connected", "error"]}}, {"_id": 0})):
+    for conn in list(_db.pos_connections.find({"status": {"$in": ["connected", "error", "disconnecting"]}}, {"_id": 0})):
+        if late():
+            break
         try:
+            if conn.get("status") == "disconnecting":
+                out["disconnected"] += int(_finish_disconnect(conn, now))
+                continue
             exp = _aware(conn.get("expires_at"))
             if exp and exp < now + REFRESH_BEFORE:
                 _refresh(conn, now)
@@ -498,17 +667,13 @@ def run_due(now: Optional[datetime] = None) -> Dict[str, Any]:
                 conn = _db.pos_connections.find_one({"id": conn["id"]}, {"_id": 0}) or conn
             if conn.get("status") != "connected" or not _tenant_ok(conn["tenant_id"]):
                 continue
+            out["forgotten"] += cleanup_customers(conn)
             if synced < SYNC_TOTAL_PER_TICK:
                 k = sync_customers(conn["id"], limit=min(SYNC_PER_TICK, SYNC_TOTAL_PER_TICK - synced))
                 synced += k
                 out["synced"] += k
-            if paris.hour >= RECONCILE_HOUR and conn.get("last_reconcile_day") != today:
-                # the day is taken before the work: two ticks at once never ask twice
-                took = _db.pos_connections.update_one({"id": conn["id"], "last_reconcile_day": conn.get("last_reconcile_day")},
-                                                      {"$set": {"last_reconcile_day": today}})
-                if getattr(took, "modified_count", 0):
-                    out["reconciled"] += reconcile(conn, now)
-                    _db.pos_connections.update_one({"id": conn["id"]}, {"$set": {"last_reconcile_at": now}})
+            if paris.hour >= RECONCILE_HOUR:
+                out["reconciled"] += _night(conn, now, today)
         except Exception as e:
             out["errors"] += 1
             _db.pos_connections.update_one({"id": conn["id"]}, {"$set": {"error": {"code": "tick", "message": str(e)[:160], "at": now}}})
@@ -551,37 +716,55 @@ def _conn_out(c: Dict[str, Any]) -> Dict[str, Any]:
 def page(token_data: TokenData = Depends(require_role(READERS))):
     _need_plan(token_data)
     tid = token_data.tenant_id
-    providers = [{"name": n, "label": cls.label, "configured": cls().configured()} for n, cls in POS.adapters().items()]
-    conns = [_conn_out(c) for c in _db.pos_connections.find({"tenant_id": tid, "status": {"$ne": "disconnected"}}, {"_id": 0})]
+    providers = [{"name": n, "label": cls.label, "configured": cls().configured() and key_ok()} for n, cls in POS.adapters().items()]
+    conns = [_conn_out(c) for c in _db.pos_connections.find({"tenant_id": tid, "status": {"$in": ["connected", "error"]}}, {"_id": 0})]
     return {"providers": providers, "connections": conns, "stores": _stores(tid)}
 
 
+def _https(request: Request) -> bool:
+    return request.url.scheme == "https" or (request.headers.get("x-forwarded-proto") or "").split(",")[0].strip() == "https"
+
+
+def _h(v: str) -> str:
+    return hashlib.sha256((v or "").encode()).hexdigest()
+
+
 @router.post("/api/owner/pos/{provider}/connect")
-def connect(provider: str, token_data: TokenData = Depends(require_role(OWNER))):
+def connect(provider: str, request: Request, token_data: TokenData = Depends(require_role(OWNER))):
     a = _adapter_or_404(provider)
     _need_plan(token_data)
-    if not a.configured():
+    if not a.configured() or not key_ok():
         raise _err(409, "not_configured", f"La connexion {a.label} n'est pas encore ouverte.")
     state = secrets.token_urlsafe(32)
-    _db.pos_oauth_states.insert_one({"state_hash": hashlib.sha256(state.encode()).hexdigest(), "provider": a.name,
+    # the browser that clicked keeps a cookie; only that browser can finish (OAuth CSRF, pentest 2026-11-28:
+    # an owner approving someone else's link on Square linked their caisse to that someone)
+    nonce = secrets.token_urlsafe(32)
+    _db.pos_oauth_states.insert_one({"state_hash": _h(state), "nonce_hash": _h(nonce), "provider": a.name,
                                      "tenant_id": token_data.tenant_id, "by": token_data.email, "at": _now(),
                                      "expires_at": _now() + timedelta(minutes=STATE_TTL_MIN)})
-    return {"url": a.authorize_url(state)}
+    resp = JSONResponse({"url": a.authorize_url(state)})
+    resp.set_cookie(COOKIE, nonce, max_age=STATE_TTL_MIN * 60, httponly=True, samesite="lax", path="/api/pos", secure=_https(request))
+    return resp
 
 
 def _back(ok: bool, why: str = "") -> RedirectResponse:
     q = "caisse=ok" if ok else f"caisse=erreur&raison={why or 'inconnue'}"
-    return RedirectResponse(f"/dashboard/parametres/api?{q}", status_code=303)
+    resp = RedirectResponse(f"/dashboard/parametres/api?{q}", status_code=303)
+    resp.delete_cookie(COOKIE, path="/api/pos")
+    return resp
 
 
 @router.get("/api/pos/{provider}/callback")
-def callback(provider: str, code: str = "", state: str = "", error: str = ""):
+def callback(provider: str, request: Request, code: str = "", state: str = "", error: str = ""):
     a = POS.get(provider)
     if a is None:
         return _back(False, "caisse")
-    st = _db.pos_oauth_states.find_one_and_delete({"state_hash": hashlib.sha256((state or "").encode()).hexdigest(), "provider": a.name}) if state else None
+    st = _db.pos_oauth_states.find_one_and_delete({"state_hash": _h(state), "provider": a.name}) if state else None
     if not st or (_aware(st.get("expires_at")) or _now()) <= _now():
         return _back(False, "lien")
+    nonce = request.cookies.get(COOKIE) or ""
+    if not nonce or not hmac.compare_digest(_h(nonce), st.get("nonce_hash") or ""):
+        return _back(False, "lien")                  # not the browser that clicked « Connecter »
     if error or not code:
         return _back(False, "refus")
     tid = st["tenant_id"]
@@ -615,6 +798,10 @@ def callback(provider: str, code: str = "", state: str = "", error: str = ""):
     else:
         cid = "pos_" + uuid.uuid4().hex[:16]
         _db.pos_connections.insert_one({"id": cid, "created_at": now, "location_map": {}, **fields})
+    try:                                             # the regulars go to Square now, the rest with the tick
+        sync_customers(cid, limit=CONNECT_PUSH, budget_s=8)
+    except Exception as e:
+        print(f"pos: first push left to the tick: {e}")
     try:
         import server as core
         core.log_audit("pos.connect", actor=st.get("by"), actor_type="user", tenant_id=tid, target=cid, meta={"provider": a.name})
@@ -659,21 +846,21 @@ def sync_now(conn_id: str, token_data: TokenData = Depends(require_role(OWNER)))
             raise _err(409, "not_connected", "La caisse n'est pas connectée.")
         raise _err(429, "too_soon", "Une vérification vient d'être faite : réessayez dans 5 minutes.")
     try:
-        pushed = sync_customers(conn_id, limit=SYNC_PER_TICK)
-        n = reconcile(c, now, begin=now - timedelta(days=2))
+        pushed = sync_customers(conn_id, limit=SYNC_PER_TICK, budget_s=20)
+        res = reconcile(c, now, begin=now - timedelta(days=2))
     except PosError as e:
         return JSONResponse(status_code=502, content={"detail": {"code": e.code, "message": str(e)}})
-    return {"ok": True, "customers_pushed": pushed, "tickets_applied": n}
+    return {"ok": True, "customers_pushed": pushed, "tickets_applied": res["applied"], "tickets_left": res["left"]}
 
 
 @router.delete("/api/owner/pos/connections/{conn_id}")
 def disconnect(conn_id: str, token_data: TokenData = Depends(require_role(OWNER))):
+    """Stops at once (no sale is applied any more); the tick then removes FidClic's customers from
+    the caisse and only then lets go of the tokens (pentest 2026-11-28: names stayed at Square)."""
     c = _mine(conn_id, token_data.tenant_id)
-    tok = _open(c).get("access_token")
-    if tok:
-        POS.get(c["provider"]).revoke(tok)
-    _db.pos_connections.update_one({"id": conn_id}, {"$set": {"status": "disconnected", "disconnected_at": _now(), "error": None},
-                                                    "$unset": {"tokens_sealed": ""}})
+    if c.get("status") == "disconnected":
+        return {"ok": True}
+    _db.pos_connections.update_one({"id": conn_id}, {"$set": {"status": "disconnecting", "disconnect_requested_at": _now(), "error": None}})
     try:
         import server as core
         core.log_audit("pos.disconnect", actor=token_data.email, actor_type="user", tenant_id=token_data.tenant_id, target=conn_id,

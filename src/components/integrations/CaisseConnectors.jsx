@@ -80,10 +80,10 @@ export default function CaisseConnectors({ canEdit = true }) {
             {canEdit && (
               <div className="flex flex-wrap gap-2">
                 {c.status !== 'connected' && <button type="button" onClick={() => connect(c.provider)} disabled={!!busy} className="inline-flex h-9 items-center gap-1.5 rounded-lg px-3 text-[13px] font-medium text-white" style={{ background: BLUE }}><ExternalLink size={14} /> Reconnecter</button>}
-                <button type="button" disabled={!!busy || c.status !== 'connected'} onClick={() => act(`sync-${c.id}`, () => ownerAPI.posSync(c.id), (r) => `Vérification faite : ${r.data.tickets_applied} ticket(s), ${r.data.customers_pushed} carte(s) envoyée(s).`)}
+                <button type="button" disabled={!!busy || c.status !== 'connected'} onClick={() => act(`sync-${c.id}`, () => ownerAPI.posSync(c.id), (r) => `Vérification faite : ${r.data.tickets_applied} ticket(s), ${r.data.customers_pushed} carte(s) envoyée(s)${r.data.tickets_left ? ` — ${r.data.tickets_left} autre(s) cette nuit` : ''}.`)}
                   className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-[#DCE3EE] bg-white px-3 text-[13px] font-medium text-[#2F6BFF] disabled:opacity-50">
                   {busy === `sync-${c.id}` ? <Loader2 size={14} className="animate-spin" /> : <RotateCw size={14} />} Vérifier maintenant</button>
-                <button type="button" disabled={!!busy} onClick={() => window.confirm(`Déconnecter ${c.label} ? Les ventes n'arriveront plus dans FidClic. L'historique reste.`) && act(`off-${c.id}`, () => ownerAPI.posDisconnect(c.id), `${c.label} déconnectée.`)}
+                <button type="button" disabled={!!busy} onClick={() => window.confirm(`Déconnecter ${c.label} ? Les ventes n'arriveront plus dans FidClic et les cartes envoyées à ${c.label} y seront effacées. L'historique reste dans FidClic.`) && act(`off-${c.id}`, () => ownerAPI.posDisconnect(c.id), `${c.label} déconnectée. Les cartes envoyées à ${c.label} y sont effacées dans les minutes qui viennent.`)}
                   className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-[#FCA5A5] bg-[#FEF2F2] px-3 text-[13px] font-medium text-[#E11D48]"><Unplug size={14} /> Déconnecter</button>
               </div>
             )}
