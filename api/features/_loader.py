@@ -67,6 +67,7 @@ MODULES = [
     "features.admin_ai",
     "features.plan_limits",
     "features.merchant_api",
+    "features.pos_connectors",       # caisse connectors (Square first): tickets in, cards out
     "features.referrals",
     "features.happy_hour",
     "features.reviews",

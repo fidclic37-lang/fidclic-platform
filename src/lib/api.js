@@ -727,6 +727,12 @@ export const ownerAPI = {
   deleteWebhook: (id) => api.delete(`/owner/integrations/webhooks/${id}`),
   testWebhook: (id) => api.post(`/owner/integrations/webhooks/${id}/test`),
   resendDelivery: (id) => api.post(`/owner/integrations/deliveries/${id}/resend`),
+  // Caisse connectors (api/features/pos_connectors.py) — Square first
+  posConnectors: () => api.get('/owner/pos'),
+  posConnect: (provider) => api.post(`/owner/pos/${provider}/connect`),
+  posSetLocations: (id, map) => api.put(`/owner/pos/connections/${id}/locations`, { map }),
+  posSync: (id) => api.post(`/owner/pos/connections/${id}/sync`),
+  posDisconnect: (id) => api.delete(`/owner/pos/connections/${id}`),
   limitAlerts: () => api.get('/owner/limit-alerts'),
   getHomeGoal: () => api.get('/owner/home/goal'),
   setHomeGoal: (body) => api.put('/owner/home/goal', body),
